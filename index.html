@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>H-Space similarity explorer</title>
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    font-family: Arial, sans-serif;
+  }
+  #intro {
+    margin: 1em auto 2em auto;
+    width: 100%;
+    max-width: 800px;
+  }
+  #intro p {
+    margin: 1em;
+    line-height: 1.2em;
+  }
+  #canvas-container {
+    margin: 0 auto;
+    margin-bottom: 2em;
+    width: 100%;
+    max-width: 800px;
+  }
+  #canvas-container div {
+    width: 100%;
+    margin: 2em 0 0 0;
+  }
+  #canvas-container div div {
+    display: inline-block;
+    max-width: 44.9%;
+    margin: 0 2.5%;
+  }
+  #canvas-container p {
+    text-align: center;
+    margin-bottom: .2em;
+  }
+  #canvas-container p input {
+    margin: 0 .5em 0 .5em;
+    height: .8em;
+    max-width: 80%;
+  }
+  canvas {
+    border: 1px solid #000;
+    max-width: 100%;
+    height: auto;
+    display: block;
+    touch-action: none;
+  }
+</style>
+</head>
+<body>
+  <div id="intro">
+    <h1 style="text-align: center;">H-Space similarity explorer</h1>
+    <p>
+      This is a simple tool to explore the similarity between the representations of different concepts at different spatial positions in the h-space of diffusion models.
+      The examples below are for Stable Diffusion 1.5, which has a h-space dimension of (50, 1280, 8, 8), i.e. 50 steps, 1280 channels, and 8x8 spatial resolution.
+    </p>
+    <p>
+      Distance Measure:
+      <select id="distance-measure">
+        <option value="cosine">Cosine</option>
+        <option value="euclidean">Euclidean</option>
+        <option value="manhattan">Manhattan</option>
+      </select>
+      
+    </p>
+  </div>
+  <div id="canvas-container"></div>
+  <script>
+
+const GRID_SIZE = 8;
+
+const canvas_container = document.getElementById('canvas-container');
+
+let last_tile = null;  // remember the last tile to avoid redundant updates
+let last_clicked = { concept_id: 0, col: 0, row: 0 };  // remember the last clicked tile
+
+const createElem = (tag, attrs, parent) => {
+  const elem = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    elem[key] = value;
+  }
+  parent.appendChild(elem);
+  return elem;
+}
+
+const concepts = [
+  {
+    bin_path: './output0.bin',
+    img_path: './output0.png',
+  },
+  {
+    bin_path: './output1.bin',
+    img_path: './output1.png',
+  },
+  {
+    bin_path: './output1.bin',
+    img_path: './output1.png',
+  },
+].map(({ bin_path, img_path }, i) => {
+  const self = { id: i, step: 50 }
+  // create html elements
+  const canvas_row = createElem('div', {}, canvas_container);
+  const image_canvas_div = createElem('div', {}, canvas_row);
+  const canvas_size = image_canvas_div.clientWidth;
+  const title_p = createElem('p', {}, image_canvas_div);
+  createElem('span', { textContent: `Image ${i+1}, step:` }, title_p);
+  const slider = createElem('input', { type: 'range', min: '0', max: '50', value: self.step }, title_p);
+  const slider_value = createElem('span', { textContent: self.step }, title_p);
+  self.image_canvas = createElem('canvas', { width: canvas_size, height: canvas_size }, image_canvas_div);
+  const tile_canvas_div = createElem('div', {}, canvas_row);
+  const text_p = createElem('p', {}, tile_canvas_div);
+  createElem('span', { textContent: `Cosine Similarities, avg: ` }, text_p);
+  self.text = createElem('span', { textContent: `?` }, text_p);
+  self.tile_canvas = createElem('canvas', { width: canvas_size, height: canvas_size }, tile_canvas_div);
+
+  // slider event listener
+  slider.addEventListener('input', event => {
+    const value = event.target.value;
+    slider_value.textContent = value;
+    self.step = value;
+    last_tile = null;
+    updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
+  });
+
+  self.image_ctx = self.image_canvas.getContext('2d');
+  self.tile_ctx = self.tile_canvas.getContext('2d');
+  self.img = new Image();
+  self.img.src = img_path;
+  self.img.onload = function() {
+    self.image_ctx.drawImage(self.img, 0, 0, self.image_ctx.canvas.width, self.image_ctx.canvas.height);
+  }
+  let repr = null;
+  fetch(bin_path)
+    .then(response => response.arrayBuffer())
+    .then(buffer => {
+      const repr = new Float32Array(buffer);
+      console.log(`Fetched repr from ${bin_path} with length ${repr.length}`);
+      self.repr = repr;
+    });
+  return self;
+})
+
+
+function cosineSimilarity(repr1, step1, col1, row1, repr2, step2, col2, row2) {
+  let dotProduct = 0.0;
+  let normA = 0.0;
+  let normB = 0.0;
+  const offset1 = step1*1280*8*8 + col1*8 + row1;
+  const offset2 = step2*1280*8*8 + col2*8 + row2;
+
+  for (let i = 0; i < 1280; i++) {
+    const i1 = offset1 + i*8*8;
+    const i2 = offset2 + i*8*8;
+    // if (i1 >= 81920 || i2 >= 81920) {
+    //   console.error(`index too high: i1: ${i1}, i2: ${i2}`);
+    // }
+    // if (isNaN(repr1[i1]) || isNaN(repr2[i2])) {
+    //   console.error(`NaN: i1: ${i1}, i2: ${i2}, repr1[i1]: ${repr1[i1]}, repr2[i2]: ${repr2[i2]}`);
+    // }
+    dotProduct += repr1[i1] * repr2[i2];
+    normA += repr1[i1] * repr1[i1];
+    normB += repr2[i2] * repr2[i2];
+  }
+
+  normA = Math.sqrt(normA);
+  normB = Math.sqrt(normB);
+
+  if (normA === 0 || normB === 0) {
+    throw new Error('One of the vectors is zero');
+  }
+
+  return dotProduct / (normA * normB);
+}
+
+// Utility function to load an image
+function loadImage(ctx, img) {
+  ctx.drawImage(img, 0, 0, ctx.canvas.width, ctx.canvas.height);
+}
+
+// Function to draw a 4x4 grid
+function drawGrid(ctx) {
+  const tile_size = ctx.canvas.width / GRID_SIZE;
+  ctx.strokeStyle = 'black';
+  ctx.beginPath();
+
+  // Draw the vertical lines
+  for (let i = 1; i < GRID_SIZE; i++) {
+    ctx.moveTo(i * tile_size, 0);
+    ctx.lineTo(i * tile_size, ctx.canvas.height);
+  }
+
+  // Draw the horizontal lines
+  for (let i = 1; i < GRID_SIZE; i++) {
+    ctx.moveTo(0, i * tile_size);
+    ctx.lineTo(ctx.canvas.width, i * tile_size);
+  }
+
+  ctx.stroke();
+}
+
+
+// Event listener for mouse movement over canvas
+function updateCanvases(base_concept, col, row) {
+  // Check if the mouse is inside the canvas
+  if (col < 0 || col >= GRID_SIZE || row < 0 || row >= GRID_SIZE) return;
+  // Check if the tile has changed
+  const curr_tile = `${base_concept.id}-${col}-${row}`;
+  if (curr_tile === last_tile) return;
+  last_tile = curr_tile;
+  // Update the canvases
+  for (const concept of concepts) {
+    const tile_size = concept.image_ctx.canvas.width / GRID_SIZE;
+    // update image canvas
+    concept.image_ctx.clearRect(0, 0, concept.image_ctx.canvas.width, concept.image_ctx.canvas.height);
+    loadImage(concept.image_ctx, concept.img);
+    drawGrid(concept.image_ctx);
+    concept.image_ctx.fillStyle = concept == base_concept ? 'rgba(255, 165, 0, 0.7)' : 'rgba(255, 165, 0, 0.4)';
+    concept.image_ctx.fillRect(col * tile_size, row * tile_size, tile_size, tile_size);
+    if (last_clicked.concept_id === concept.id && !(last_clicked.col === col && last_clicked.row === row)) {
+      concept.image_ctx.fillStyle = 'rgba(255, 165, 165, 0.7)';
+      concept.image_ctx.fillRect(last_clicked.col * tile_size, last_clicked.row * tile_size, tile_size, tile_size);
+    }
+    // update tile canvas
+    concept.tile_ctx.clearRect(0, 0, concept.tile_ctx.canvas.width, concept.tile_ctx.canvas.height);
+    let totalSimilarity = 0;
+    for (let i = 0; i < GRID_SIZE; i++) {
+      for (let j = 0; j < GRID_SIZE; j++) {
+        const similarity = cosineSimilarity(base_concept.repr, base_concept.step, col, row, concept.repr, concept.step, i, j);
+        totalSimilarity += similarity;
+        concept.tile_ctx.fillStyle = similarity > 0 ? `rgba(255, 165, 0, ${similarity})` : `rgba(0, 165, 255, ${-similarity})`;
+        concept.tile_ctx.fillRect(i * tile_size, j * tile_size, tile_size, tile_size);
+      }
+    }
+    const averageSimilarity = totalSimilarity / (GRID_SIZE * GRID_SIZE);
+    concept.text.textContent = `${averageSimilarity.toFixed(4)}`;	
+  }
+}
+
+function getMousePos(canvas, event) {
+  if (event.touches) event = event.touches[0];  // handle touch events for mobile
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const col = Math.floor(x / canvas.width * GRID_SIZE);
+  const row = Math.floor(y / canvas.width * GRID_SIZE);
+  return { col, row };
+}
+
+setTimeout(() => {
+  concepts.forEach((concept, concept_index) => {
+    loadImage(concept.image_ctx, concept.img);
+    drawGrid(concept.image_ctx);
+    [concept.image_canvas, concept.tile_canvas].forEach(canvas => {
+      const moveHandler = function(event) {
+        const { col, row } = getMousePos(canvas, event);
+        updateCanvases(concept, col, row);
+      };
+      const leaveHandler = function(event) {
+        updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
+      };
+      const clickHandler = function(event) {
+        const { col, row } = getMousePos(canvas, event);
+        last_clicked.concept_id = concept.id;
+        last_clicked.col = col;
+        last_clicked.row = row;
+        updateCanvases(concept, col, row);
+      };
+      canvas.addEventListener('mousemove', moveHandler);
+      canvas.addEventListener('mouseleave', leaveHandler);
+      canvas.addEventListener('click', clickHandler);
+      canvas.addEventListener('touchstart', clickHandler);
+      canvas.addEventListener('touchmove', clickHandler);
+    });
+  });
+}, 100);
+
+// reload on resize to update canvas size
+const CURRENT_WIDTH = window.innerWidth;
+window.addEventListener('resize', () => {
+  // if (window.innerWidth !== CURRENT_WIDTH) {
+    // location.reload();
+    // go through all canvases and update their size
+    concepts.forEach(concept => {
+      const canvas_size = concept.image_ctx.canvas.parentElement.clientWidth;      
+      concept.image_canvas.width = canvas_size;
+      concept.image_canvas.height = canvas_size;
+      concept.tile_canvas.width = canvas_size;
+      concept.tile_canvas.height = canvas_size;
+      loadImage(concept.image_ctx, concept.img);
+      drawGrid(concept.image_ctx);
+      updateCanvases(concept, last_clicked.col, last_clicked.row);
+    });
+  // }
+});
+
+</script>
+
+</body>
+</html>
