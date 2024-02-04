@@ -60,8 +60,11 @@
       The examples below are for Stable Diffusion 1.5, which has a h-space dimension of (50, 1280, 8, 8), i.e. 50 steps, 1280 channels, and 8x8 spatial resolution.
     </p>
     <p>
-      Distance Measure:
-      <select id="distance-measure">
+      All displayed similarities are relative to the currently hovered, or last clicked, tile.
+    </p>
+    <p>
+      Similarity measure:
+      <select id="similarity-measure">
         <option value="cosine">Cosine</option>
         <option value="euclidean">Euclidean</option>
         <option value="manhattan">Manhattan</option>
@@ -90,23 +93,26 @@ const createElem = (tag, attrs, parent) => {
 
 const concepts = [
   {
-    bin_path: './output0.bin',
-    img_path: './output0.png',
+    bin_path: './output0/repr.bin',
+    img_path: './output0/',
+    initial_step: 50,
+  },
+  {
+    bin_path: './output1/repr.bin',
+    img_path: './output1/',
+    initial_step: 50,
   },
   {
     bin_path: './output1.bin',
-    img_path: './output1.png',
+    img_path: './output1/',
+    initial_step: 32,
   },
-  {
-    bin_path: './output1.bin',
-    img_path: './output1.png',
-  },
-].map(({ bin_path, img_path }, i) => {
-  const self = { id: i, step: 50 }
+].map(({ bin_path, img_path, initial_step }, i) => {
+  const self = { id: i, step: initial_step };
   // create html elements
   const canvas_row = createElem('div', {}, canvas_container);
   const image_canvas_div = createElem('div', {}, canvas_row);
-  const canvas_size = image_canvas_div.clientWidth;
+  const canvas_size = image_canvas_div.clientWidth * 2;
   const title_p = createElem('p', {}, image_canvas_div);
   createElem('span', { textContent: `Image ${i+1}, step:` }, title_p);
   const slider = createElem('input', { type: 'range', min: '0', max: '50', value: self.step }, title_p);
@@ -114,7 +120,7 @@ const concepts = [
   self.image_canvas = createElem('canvas', { width: canvas_size, height: canvas_size }, image_canvas_div);
   const tile_canvas_div = createElem('div', {}, canvas_row);
   const text_p = createElem('p', {}, tile_canvas_div);
-  createElem('span', { textContent: `Cosine Similarities, avg: ` }, text_p);
+  createElem('span', { textContent: `Similarities, avg: ` }, text_p);
   self.text = createElem('span', { textContent: `?` }, text_p);
   self.tile_canvas = createElem('canvas', { width: canvas_size, height: canvas_size }, tile_canvas_div);
 
@@ -123,6 +129,7 @@ const concepts = [
     const value = event.target.value;
     slider_value.textContent = value;
     self.step = value;
+    self.img.src = img_path + `${self.step}.png`;
     last_tile = null;
     updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
   });
@@ -130,9 +137,12 @@ const concepts = [
   self.image_ctx = self.image_canvas.getContext('2d');
   self.tile_ctx = self.tile_canvas.getContext('2d');
   self.img = new Image();
-  self.img.src = img_path;
+  
+  self.img.src = img_path + `${self.step}.png`;
   self.img.onload = function() {
+    self.image_ctx.globalCompositeOperation = 'destination-over';
     self.image_ctx.drawImage(self.img, 0, 0, self.image_ctx.canvas.width, self.image_ctx.canvas.height);
+    self.image_ctx.globalCompositeOperation = 'source-over';
   }
   let repr = null;
   fetch(bin_path)
@@ -146,12 +156,11 @@ const concepts = [
 })
 
 
-function cosineSimilarity(repr1, step1, col1, row1, repr2, step2, col2, row2) {
+
+function cosineSimilarity(repr1, offset1, repr2, offset2) {
   let dotProduct = 0.0;
   let normA = 0.0;
   let normB = 0.0;
-  const offset1 = step1*1280*8*8 + col1*8 + row1;
-  const offset2 = step2*1280*8*8 + col2*8 + row2;
 
   for (let i = 0; i < 1280; i++) {
     const i1 = offset1 + i*8*8;
@@ -177,6 +186,63 @@ function cosineSimilarity(repr1, step1, col1, row1, repr2, step2, col2, row2) {
   return dotProduct / (normA * normB);
 }
 
+function euclideanDistance(repr1, offset1, repr2, offset2) {
+  let sum = 0.0;
+  for (let i = 0; i < 1280; i++) {
+    const i1 = offset1 + i*8*8;
+    const i2 = offset2 + i*8*8;
+    sum += Math.pow(repr1[i1] - repr2[i2], 2);
+  }
+
+  return Math.sqrt(sum);
+}
+
+function manhattanDistance(repr1, offset1, repr2, offset2) {
+  let sum = 0.0;
+  for (let i = 0; i < 1280; i++) {
+    const i1 = offset1 + i*8*8;
+    const i2 = offset2 + i*8*8;
+    sum += Math.abs(repr1[i1] - repr2[i2]);
+  }
+  return sum;
+}
+
+
+document.getElementById('similarity-measure').addEventListener('change', event => {
+  last_tile = null;
+  updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
+});
+
+
+function calcSimilarities(base_concept, col, row, concept) {
+  const calc = measure => {
+    const x = [];
+    for (let i = 0; i < GRID_SIZE; i++) {
+      for (let j = 0; j < GRID_SIZE; j++) {
+        const offset1 = base_concept.step*1280*8*8 + row*8 + col;
+        const offset2 = concept.step*1280*8*8 + j*8 + i;
+        const similarity = measure(base_concept.repr, offset1, concept.repr, offset2);
+        x.push(similarity);
+      }
+    }
+    return x;
+  }
+  const measure_str = document.getElementById('similarity-measure').value;
+  if (measure_str === 'cosine') {
+    return calc(cosineSimilarity);
+  } else if (measure_str === 'euclidean') {
+    const differences =  calc(euclideanDistance);
+    const max = Math.max(...differences);
+    return differences.map(x => 1 - x / max);
+  } else if (measure_str === 'manhattan') {
+    const differences = calc(manhattanDistance);
+    const max = Math.max(...differences);
+    return differences.map(x => 1 - x / max);
+  }
+}
+
+
+
 // Utility function to load an image
 function loadImage(ctx, img) {
   ctx.drawImage(img, 0, 0, ctx.canvas.width, ctx.canvas.height);
@@ -186,6 +252,7 @@ function loadImage(ctx, img) {
 function drawGrid(ctx) {
   const tile_size = ctx.canvas.width / GRID_SIZE;
   ctx.strokeStyle = 'black';
+  ctx.lineWidth = 2;
   ctx.beginPath();
 
   // Draw the vertical lines
@@ -208,36 +275,45 @@ function drawGrid(ctx) {
 function updateCanvases(base_concept, col, row) {
   // Check if the mouse is inside the canvas
   if (col < 0 || col >= GRID_SIZE || row < 0 || row >= GRID_SIZE) return;
+
   // Check if the tile has changed
   const curr_tile = `${base_concept.id}-${col}-${row}`;
   if (curr_tile === last_tile) return;
   last_tile = curr_tile;
+
   // Update the canvases
   for (const concept of concepts) {
     const tile_size = concept.image_ctx.canvas.width / GRID_SIZE;
     // update image canvas
-    concept.image_ctx.clearRect(0, 0, concept.image_ctx.canvas.width, concept.image_ctx.canvas.height);
-    loadImage(concept.image_ctx, concept.img);
-    drawGrid(concept.image_ctx);
-    concept.image_ctx.fillStyle = concept == base_concept ? 'rgba(255, 165, 0, 0.7)' : 'rgba(255, 165, 0, 0.4)';
-    concept.image_ctx.fillRect(col * tile_size, row * tile_size, tile_size, tile_size);
+    const img_ctx = concept.image_ctx;
+    img_ctx.clearRect(0, 0, img_ctx.canvas.width, img_ctx.canvas.height);
+    loadImage(img_ctx, concept.img);
+    drawGrid(img_ctx);
+    if (concept === base_concept) {
+      img_ctx.strokeStyle = 'rgba(255, 165, 0, 1)';
+      img_ctx.lineWidth = 2;
+      img_ctx.strokeRect(col * tile_size, row * tile_size, tile_size, tile_size);
+      img_ctx.fillStyle = 'rgba(255, 165, 0, 0.7)';
+      img_ctx.fillRect(col * tile_size, row * tile_size, tile_size, tile_size);
+    }
     if (last_clicked.concept_id === concept.id && !(last_clicked.col === col && last_clicked.row === row)) {
-      concept.image_ctx.fillStyle = 'rgba(255, 165, 165, 0.7)';
-      concept.image_ctx.fillRect(last_clicked.col * tile_size, last_clicked.row * tile_size, tile_size, tile_size);
+      img_ctx.fillStyle = 'rgba(255, 165, 165, 0.7)';
+      img_ctx.fillRect(last_clicked.col * tile_size, last_clicked.row * tile_size, tile_size, tile_size);
     }
     // update tile canvas
+    const similarities = calcSimilarities(base_concept, col, row, concept);
     concept.tile_ctx.clearRect(0, 0, concept.tile_ctx.canvas.width, concept.tile_ctx.canvas.height);
-    let totalSimilarity = 0;
     for (let i = 0; i < GRID_SIZE; i++) {
       for (let j = 0; j < GRID_SIZE; j++) {
-        const similarity = cosineSimilarity(base_concept.repr, base_concept.step, col, row, concept.repr, concept.step, i, j);
-        totalSimilarity += similarity;
+        const similarity = similarities[i * GRID_SIZE + j];
         concept.tile_ctx.fillStyle = similarity > 0 ? `rgba(255, 165, 0, ${similarity})` : `rgba(0, 165, 255, ${-similarity})`;
         concept.tile_ctx.fillRect(i * tile_size, j * tile_size, tile_size, tile_size);
       }
     }
-    const averageSimilarity = totalSimilarity / (GRID_SIZE * GRID_SIZE);
-    concept.text.textContent = `${averageSimilarity.toFixed(4)}`;	
+
+    // TODO
+    const averageSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length;
+    concept.text.textContent = `${averageSimilarity.toFixed(4)}`;
   }
 }
 
@@ -246,8 +322,8 @@ function getMousePos(canvas, event) {
   const rect = canvas.getBoundingClientRect();
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
-  const col = Math.floor(x / canvas.width * GRID_SIZE);
-  const row = Math.floor(y / canvas.width * GRID_SIZE);
+  const col = Math.floor(2 * x / canvas.width * GRID_SIZE);
+  const row = Math.floor(2 * y / canvas.width * GRID_SIZE);
   return { col, row };
 }
 
@@ -286,7 +362,7 @@ window.addEventListener('resize', () => {
     // location.reload();
     // go through all canvases and update their size
     concepts.forEach(concept => {
-      const canvas_size = concept.image_ctx.canvas.parentElement.clientWidth;      
+      const canvas_size = concept.image_ctx.canvas.parentElement.clientWidth * 2;
       concept.image_canvas.width = canvas_size;
       concept.image_canvas.height = canvas_size;
       concept.tile_canvas.width = canvas_size;
