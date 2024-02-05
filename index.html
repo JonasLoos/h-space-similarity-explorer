@@ -247,6 +247,13 @@ function manhattanDistance(repr1, offset1, repr2, offset2) {
 
 
 function calcSimilarities(base_concept, col, row, concept) {
+  // check if representations are loaded
+  if (!base_concept.repr || !concept.repr) {
+    console.log(`Representations not loaded (base_concept: ${!!base_concept.repr}, other concept: ${!!concept.repr})`);
+    return Array(GRID_SIZE*GRID_SIZE).fill(0);
+  }
+
+  // helper function
   const calc = measure => {
     const x = [];
     for (let i = 0; i < GRID_SIZE; i++) {
@@ -259,6 +266,8 @@ function calcSimilarities(base_concept, col, row, concept) {
     }
     return x;
   }
+
+  // calculate similarities
   const measure_str = document.getElementById('similarity-measure').value;
   if (measure_str === 'cosine') {
     return calc(cosineSimilarity);
