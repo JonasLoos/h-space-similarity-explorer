@@ -114,8 +114,9 @@ function setupConcept({ name, initial_step }, i) {
   const prompt = available_concepts.find(x => x.name === name).prompt;
   // create html elements
   const canvas_container = document.getElementById('canvas-container');
-  const title = createElem('h2', { textContent: name, title: concepts }, canvas_container)
-  title_select = createElem('select', { id: `concept-${i}-select` }, title);
+  const title_elem = createElem('h2', {}, canvas_container)
+  const title_text = createElem('span', { textContent: name }, title_elem);
+  const title_select = createElem('select', { id: `concept-${i}-select` }, title_elem);
   available_concepts.forEach((concept, i) => {
     const option = createElem('option', { value: concept.name, textContent: concept.name }, title_select);
     if (concept.name === name) option.selected = true;
@@ -141,14 +142,14 @@ function setupConcept({ name, initial_step }, i) {
     slider_value.textContent = value;
     concept.step = value;
     concept.img.src = `representations/${concept.name}/${concept.step}.png`;
-    last_tile = null;  // force update
-    updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
+    updateCanvasesLastClicked();
   });
 
   // concept name select event listener
   title_select.addEventListener('change', event => {
     const value = event.target.value;
     const prompt = available_concepts.find(x => x.name === value).prompt;
+    title_text.textContent = value;
     prompt_p.textContent = prompt;
     concept.name = value;
     concept.img.src = `representations/${concept.name}/${concept.step}.png`;
@@ -159,10 +160,9 @@ function setupConcept({ name, initial_step }, i) {
         const repr = new Float32Array(buffer);
         console.log(`Fetched repr for ${concept.name} with length ${repr.length}`);
         concept.repr = repr;
+        updateCanvasesLastClicked();
       });
-    // TODO: make sure the slider event listener still works
-    last_tile = null;  // force update
-    updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
+    updateCanvasesLastClicked();
   });
 
   // get convas contexts
@@ -176,6 +176,7 @@ function setupConcept({ name, initial_step }, i) {
     concept.image_ctx.globalCompositeOperation = 'destination-over';
     concept.image_ctx.drawImage(concept.img, 0, 0, concept.image_ctx.canvas.width, concept.image_ctx.canvas.height);
     concept.image_ctx.globalCompositeOperation = 'source-over';
+    updateCanvasesLastClicked();
   }
 
   // load representation
@@ -347,6 +348,15 @@ function updateCanvases(base_concept, col, row) {
   }
 }
 
+
+// force update of all canvases with the last clicked tile as the base
+function updateCanvasesLastClicked() {
+  last_tile = null;  // force update
+  updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
+}
+
+
+
 function getMousePos(canvas, event) {
   if (event.touches) event = event.touches[0];  // handle touch events for mobile
   const rect = canvas.getBoundingClientRect();
@@ -421,6 +431,11 @@ function init() {
         updateCanvases(concept, last_clicked.col, last_clicked.row);
       });
   });
+
+  // update canvases on load with a delay
+  setTimeout(() => {
+    updateCanvasesLastClicked();
+  }, 200);
 
 }
 
