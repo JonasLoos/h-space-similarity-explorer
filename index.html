@@ -25,9 +25,19 @@
     width: 100%;
     max-width: 800px;
   }
+  #canvas-container h2 {
+    text-align: center;
+    margin: 2em 0 0 0;
+  }
+  #canvas-container h2 select {
+    margin: 1em;
+  }
+  #canvas-container>p {
+    text-align: center;
+    color: grey;
+  }
   #canvas-container div {
     width: 100%;
-    margin: 2em 0 0 0;
   }
   #canvas-container div div {
     display: inline-block;
@@ -100,54 +110,84 @@ function createElem(tag, attrs, parent) {
 
 
 function setupConcept({ name, initial_step }, i) {
-  const self = { id: i, name: name, step: initial_step };
-  const img_path = `representations/${name}/`;
-  const bin_path = `representations/${name}/repr.bin`;
+  const concept = { id: i, name: name, step: initial_step };
+  const prompt = available_concepts.find(x => x.name === name).prompt;
   // create html elements
   const canvas_container = document.getElementById('canvas-container');
+  const title = createElem('h2', { textContent: name, title: concepts }, canvas_container)
+  title_select = createElem('select', { id: `concept-${i}-select` }, title);
+  available_concepts.forEach((concept, i) => {
+    const option = createElem('option', { value: concept.name, textContent: concept.name }, title_select);
+    if (concept.name === name) option.selected = true;
+  });
+  const prompt_p = createElem('p', { textContent: `Prompt: ${prompt}` }, canvas_container);
   const canvas_row = createElem('div', {}, canvas_container);
   const image_canvas_div = createElem('div', {}, canvas_row);
   const canvas_size = image_canvas_div.clientWidth * 2;
   const title_p = createElem('p', {}, image_canvas_div);
-  createElem('span', { textContent: `${name}, step:` }, title_p);
-  const slider = createElem('input', { type: 'range', min: '1', max: '50', value: self.step }, title_p);
-  const slider_value = createElem('span', { textContent: self.step }, title_p);
-  self.image_canvas = createElem('canvas', { width: canvas_size, height: canvas_size }, image_canvas_div);
+  createElem('span', { textContent: `Image at step:` }, title_p);
+  const slider = createElem('input', { type: 'range', min: '1', max: '50', value: concept.step }, title_p);
+  const slider_value = createElem('span', { textContent: concept.step }, title_p);
+  concept.image_canvas = createElem('canvas', { width: canvas_size, height: canvas_size }, image_canvas_div);
   const tile_canvas_div = createElem('div', {}, canvas_row);
   const text_p = createElem('p', {}, tile_canvas_div);
   createElem('span', { textContent: `Similarities, avg: ` }, text_p);
-  self.text = createElem('span', { textContent: `?` }, text_p);
-  self.tile_canvas = createElem('canvas', { width: canvas_size, height: canvas_size }, tile_canvas_div);
+  concept.text = createElem('span', { textContent: `?` }, text_p);
+  concept.tile_canvas = createElem('canvas', { width: canvas_size, height: canvas_size }, tile_canvas_div);
 
   // slider event listener
   slider.addEventListener('input', event => {
     const value = event.target.value;
     slider_value.textContent = value;
-    self.step = value;
-    self.img.src = img_path + `${self.step}.png`;
-    last_tile = null;
+    concept.step = value;
+    concept.img.src = `representations/${concept.name}/${concept.step}.png`;
+    last_tile = null;  // force update
     updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
   });
 
-  self.image_ctx = self.image_canvas.getContext('2d');
-  self.tile_ctx = self.tile_canvas.getContext('2d');
-  self.img = new Image();
-  
-  self.img.src = img_path + `${self.step}.png`;
-  self.img.onload = function() {
-    self.image_ctx.globalCompositeOperation = 'destination-over';
-    self.image_ctx.drawImage(self.img, 0, 0, self.image_ctx.canvas.width, self.image_ctx.canvas.height);
-    self.image_ctx.globalCompositeOperation = 'source-over';
+  // concept name select event listener
+  title_select.addEventListener('change', event => {
+    const value = event.target.value;
+    const prompt = available_concepts.find(x => x.name === value).prompt;
+    prompt_p.textContent = prompt;
+    concept.name = value;
+    concept.img.src = `representations/${concept.name}/${concept.step}.png`;
+    concept.repr = null;
+    fetch(`representations/${concept.name}/repr.bin`)
+      .then(response => response.arrayBuffer())
+      .then(buffer => {
+        const repr = new Float32Array(buffer);
+        console.log(`Fetched repr for ${concept.name} with length ${repr.length}`);
+        concept.repr = repr;
+      });
+    // TODO: make sure the slider event listener still works
+    last_tile = null;  // force update
+    updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
+  });
+
+  // get convas contexts
+  concept.image_ctx = concept.image_canvas.getContext('2d');
+  concept.tile_ctx = concept.tile_canvas.getContext('2d');
+
+  // load image
+  concept.img = new Image();  
+  concept.img.src = `representations/${concept.name}/${concept.step}.png`;
+  concept.img.onload = function() {
+    concept.image_ctx.globalCompositeOperation = 'destination-over';
+    concept.image_ctx.drawImage(concept.img, 0, 0, concept.image_ctx.canvas.width, concept.image_ctx.canvas.height);
+    concept.image_ctx.globalCompositeOperation = 'source-over';
   }
+
+  // load representation
   let repr = null;
-  fetch(bin_path)
+  fetch(`representations/${concept.name}/repr.bin`)
     .then(response => response.arrayBuffer())
     .then(buffer => {
       const repr = new Float32Array(buffer);
-      console.log(`Fetched repr from ${bin_path} with length ${repr.length}`);
-      self.repr = repr;
+      console.log(`Fetched repr for ${concept.name} with length ${repr.length}`);
+      concept.repr = repr;
     });
-  return self;
+  return concept;
 }
 
 
@@ -323,8 +363,9 @@ function init() {
   fetch('representations/outputs.txt')
     .then(response => response.text())
     .then(text => {
-      text.split('\n').forEach((name, i) => {
-        available_concepts.push({ name, initial_step: 50 });
+      text.split('\n').forEach((line, i) => {
+        const [name, ...prompt] = line.split(' ');
+        available_concepts.push({ name, prompt: prompt.join(' ')});
       });
     })
     .then(() => {
