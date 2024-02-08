@@ -92,9 +92,9 @@ let last_clicked = { concept_id: 0, col: 0, row: 0 };  // remember the last clic
 const available_concepts = [];
 const concepts = [];
 const initial_concepts = [
-  { name: 'Cat', initial_step: 50, },
-  { name: 'Dog', initial_step: 50, },
-  { name: 'Dog', initial_step: 32, },
+  { index: 0, initial_step: 50, },
+  { index: 1, initial_step: 50, },
+  { index: 1, initial_step: 32, },
 ];
 
 
@@ -110,9 +110,9 @@ function createElem(tag, attrs, parent) {
 
 
 // setup a concept with its canvas elements and event listeners
-function setupConcept({ name, initial_step }, i) {
+function setupConcept({ index, initial_step }, i) {
+  const { name, prompt } = available_concepts[index];
   const concept = { id: i, name: name, step: initial_step };
-  const prompt = available_concepts.find(x => x.name === name).prompt;
   // create html elements
   const canvas_container = document.getElementById('canvas-container');
   const title_elem = createElem('h2', {}, canvas_container)
@@ -391,8 +391,8 @@ function init() {
       });
     })
     .then(() => {
-      initial_concepts.forEach((x, i) => {
-        concepts.push(setupConcept(x, i));
+      initial_concepts.forEach((index, i) => {
+        concepts.push(setupConcept(index, i));
       });
     })
     .then(() => {
