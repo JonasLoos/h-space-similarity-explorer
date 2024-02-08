@@ -68,6 +68,7 @@
     <p>
       This is a simple tool to explore the similarity between the representations of different concepts at different spatial positions in the h-space of diffusion models.
       The examples below are for Stable Diffusion 1.5, which has a h-space dimension of (50, 1280, 8, 8), i.e. 50 steps, 1280 channels, and 8x8 spatial resolution.
+      If you want to try this for your own prompts, check out the source code <a href="https://github.com/JonasLoos/h-space-similarity-explorer">here</a>.
     </p>
     <p>
       All displayed similarities are relative to the currently hovered, or last clicked, tile.
@@ -79,12 +80,12 @@
         <option value="euclidean">Euclidean</option>
         <option value="manhattan">Manhattan</option>
       </select>
-      
     </p>
   </div>
   <div id="canvas-container"></div>
   <script>
 
+// initialize variables
 const GRID_SIZE = 8;
 let last_tile = null;  // remember the last tile to avoid redundant updates
 let last_clicked = { concept_id: 0, col: 0, row: 0 };  // remember the last clicked tile
@@ -97,7 +98,7 @@ const initial_concepts = [
 ];
 
 
-
+// create an html element with attributes and append it to a parent
 function createElem(tag, attrs, parent) {
   const elem = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
@@ -108,7 +109,7 @@ function createElem(tag, attrs, parent) {
 }
 
 
-
+// setup a concept with its canvas elements and event listeners
 function setupConcept({ name, initial_step }, i) {
   const concept = { id: i, name: name, step: initial_step };
   const prompt = available_concepts.find(x => x.name === name).prompt;
@@ -246,6 +247,7 @@ function manhattanDistance(repr1, offset1, repr2, offset2) {
 }
 
 
+// calculate similarities based on the selected similarity measure and tile
 function calcSimilarities(base_concept, col, row, concept) {
   // check if representations are loaded
   if (!base_concept.repr || !concept.repr) {
@@ -253,7 +255,7 @@ function calcSimilarities(base_concept, col, row, concept) {
     return Array(GRID_SIZE*GRID_SIZE).fill(0);
   }
 
-  // helper function
+  // helper function to calculate similarities for all tiles
   const calc = measure => {
     const x = [];
     for (let i = 0; i < GRID_SIZE; i++) {
@@ -352,6 +354,7 @@ function updateCanvases(base_concept, col, row) {
       }
     }
 
+    // calculate and update average similarity
     const averageSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length;
     concept.text.textContent = `${averageSimilarity.toFixed(4)}`;
   }
@@ -365,7 +368,7 @@ function updateCanvasesLastClicked() {
 }
 
 
-
+// get mouse/touch position on canvas
 function getMousePos(canvas, event) {
   if (event.touches) event = event.touches[0];  // handle touch events for mobile
   const rect = canvas.getBoundingClientRect();
@@ -449,6 +452,7 @@ function init() {
 }
 
 
+// start the app
 init();
 
 </script>
