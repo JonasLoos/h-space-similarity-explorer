@@ -207,6 +207,14 @@ function setupConcept({ index, initial_step }, i) {
       last_clicked.row = row;
       last_tile = null;  // force update
       updateCanvases(concept, col, row);
+
+      // log clicked tile
+      const block_repr = [];
+      for (let i = 0; i < current_model.hspace_channels; i++) {
+        const offset = (concept.step-1)*current_model.hspace_channels*current_model.hspace_spatial*current_model.hspace_spatial + row*current_model.hspace_spatial + col;
+        block_repr.push(concept.repr[offset + i*current_model.hspace_spatial*current_model.hspace_spatial]);
+      }
+      console.log(`Clicked on ${concept.name} at (${col},${row})`, block_repr);
     };
     canvas.addEventListener('click', clickHandler);
     canvas.addEventListener('mousemove', moveHandler);
