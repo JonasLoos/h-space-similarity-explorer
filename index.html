@@ -5,61 +5,61 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>H-Space similarity explorer</title>
 <style>
-  * {
-    margin: 0;
-    padding: 0;
-    font-family: Arial, sans-serif;
-  }
-  #intro {
-    margin: 1em auto 2em auto;
-    width: 100%;
-    max-width: 800px;
-  }
-  #intro p {
-    margin: 1em;
-    line-height: 1.2em;
-  }
-  #canvas-container {
-    margin: 0 auto;
-    margin-bottom: 2em;
-    width: 100%;
-    max-width: 800px;
-  }
-  #canvas-container h2 {
-    text-align: center;
-    margin: 2em 0 0 0;
-  }
-  #canvas-container h2 select {
-    margin: 1em;
-  }
-  #canvas-container>p {
-    text-align: center;
-    color: grey;
-  }
-  #canvas-container div {
-    width: 100%;
-  }
-  #canvas-container div div {
-    display: inline-block;
-    max-width: 44.9%;
-    margin: 0 2.5%;
-  }
-  #canvas-container p {
-    text-align: center;
-    margin-bottom: .2em;
-  }
-  #canvas-container p input {
-    margin: 0 .5em 0 .5em;
-    height: .8em;
-    max-width: 80%;
-  }
-  canvas {
-    border: 1px solid #000;
-    max-width: 100%;
-    height: auto;
-    display: block;
-    touch-action: none;
-  }
+* {
+  margin: 0;
+  padding: 0;
+  font-family: Arial, sans-serif;
+}
+#intro {
+  margin: 1em auto 2em auto;
+  width: 100%;
+  max-width: 800px;
+}
+#intro p {
+  margin: 1em;
+  line-height: 1.2em;
+}
+#canvas-container {
+  margin: 0 auto;
+  margin-bottom: 2em;
+  width: 100%;
+  max-width: 800px;
+}
+#canvas-container h2 {
+  text-align: center;
+  margin: 2em 0 0 0;
+}
+#canvas-container h2 select {
+  margin: 1em;
+}
+#canvas-container>p {
+  text-align: center;
+  color: grey;
+}
+#canvas-container div {
+  width: 100%;
+}
+#canvas-container div div {
+  display: inline-block;
+  max-width: 44.9%;
+  margin: 0 2.5%;
+}
+#canvas-container p {
+  text-align: center;
+  margin-bottom: .2em;
+}
+#canvas-container p input {
+  margin: 0 .5em 0 .5em;
+  height: .8em;
+  max-width: 80%;
+}
+canvas {
+  border: 1px solid #000;
+  max-width: 100%;
+  height: auto;
+  display: block;
+  touch-action: none;
+}
 </style>
 </head>
 <body>
@@ -458,6 +458,7 @@ function init() {
         available_concepts.push({ name, prompt});
       });
     })
+    .catch(error => console.error('Error while fetching prompts info:', error));
   
   // load available models
   const models_promise = fetch('representations/models.json')
@@ -470,10 +471,17 @@ function init() {
       current_model = available_models[0];
       updateModelDescription(current_model);
     })
+    .catch(error => console.error('Error while fetching models info:', error));
   
   // initialize concepts
   Promise.all([prompts_promise, models_promise])
     .then(() => {
+      // check if there are any concepts
+      if (available_concepts.length === 0) {
+        createElem('p', { textContent: 'Error loading Data' }, document.getElementById('canvas-container'));
+        return;
+      }
+      // setup concepts
       initial_concepts.forEach((index, i) => {
         concepts.push(setupConcept(index, i));
       });
