@@ -67,13 +67,12 @@
     <h1 style="text-align: center;">H-Space similarity explorer</h1>
     <p>
       This is a simple tool to explore the similarity between the representations of different concepts at different spatial positions in the h-space of diffusion models.
-      The examples below are for Stable Diffusion 1.5, which has a h-space dimension of (50, 1280, 8, 8), i.e. 50 steps, 1280 channels, and 8x8 spatial resolution.
       If you want to try this for your own prompts, check out the source code <a href="https://github.com/JonasLoos/h-space-similarity-explorer">here</a>.
     </p>
     <p>
-      All displayed similarities are relative to the currently hovered, or last clicked, tile.
-    </p>
-    <p>
+      Model:
+      <select id="model-to-use">
+      </select>
       Similarity measure:
       <select id="similarity-measure">
         <option value="cosine">Cosine</option>
@@ -81,14 +80,20 @@
         <option value="manhattan">Manhattan</option>
       </select>
     </p>
+    <p id="model-description">
+    </p>
+    <p>
+      All displayed similarities are relative to the currently hovered, or last clicked, tile.
+    </p>
   </div>
   <div id="canvas-container"></div>
   <script>
 
 // initialize variables
-const GRID_SIZE = 8;
 let last_tile = null;  // remember the last tile to avoid redundant updates
 let last_clicked = { concept_id: 0, col: 0, row: 0 };  // remember the last clicked tile
+const available_models = [];
+let current_model = null;
 const available_concepts = [];
 const concepts = [];
 const initial_concepts = [
@@ -137,71 +142,111 @@ function setupConcept({ index, initial_step }, i) {
   concept.text = createElem('span', { textContent: `?` }, text_p);
   concept.tile_canvas = createElem('canvas', { width: canvas_size, height: canvas_size }, tile_canvas_div);
 
+  // get convas contexts
+  concept.image_ctx = concept.image_canvas.getContext('2d');
+  concept.tile_ctx = concept.tile_canvas.getContext('2d');
+
+
+  const getRepr = () => {
+    concept.repr = null;
+    fetch(`representations/${current_model.short}/${concept.name}/repr.bin`)
+      .then(response => response.arrayBuffer())
+      .then(buffer => {
+        const repr = new Float32Array(buffer);
+        const num_nans = repr.reduce((a, b) => a + (isNaN(b) ? 1 : 0), 0);
+        console.log(`Fetched repr for ${concept.name} with length ${repr.length} with ${num_nans} NaNs`);
+        concept.repr = repr;
+        updateCanvasesWithLastClicked();
+      });
+  };
+
+  // update
+  concept.update = () => {
+    // setup prompt related elements
+    const prompt = available_concepts.find(x => x.name === concept.name).prompt;
+    title_text.textContent = concept.name;
+    prompt_p.textContent = prompt;
+
+    // update slider
+    concept.step = Math.max(Math.round(concept.step / slider.max * current_model.steps), 1)  // update step to match new model
+    slider.max = current_model.steps;
+    slider.value = concept.step;
+    slider_value.textContent = concept.step;
+
+    // update image und representation
+    concept.img.src = `representations/${current_model.short}/${concept.name}/${concept.step}.png`;
+    getRepr();
+  }
+
+  // load image
+  concept.img = new Image();  
+  concept.img.src = `representations/${current_model.short}/${concept.name}/${concept.step}.png`;
+  concept.img.onload = function() {
+    concept.image_ctx.globalCompositeOperation = 'destination-over';
+    concept.image_ctx.drawImage(concept.img, 0, 0, concept.image_ctx.canvas.width, concept.image_ctx.canvas.height);
+    concept.image_ctx.globalCompositeOperation = 'source-over';
+    updateCanvasesWithLastClicked();
+  }
+
+  // load representation
+  getRepr();
+
+  // setup event listeners  
+  [concept.image_canvas, concept.tile_canvas].forEach(canvas => {
+    const moveHandler = function(event) {
+      const { col, row } = getMousePos(canvas, event);
+      updateCanvases(concept, col, row);
+    };
+    const leaveHandler = function(event) {
+      updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
+    };
+    const clickHandler = function(event) {
+      const { col, row } = getMousePos(canvas, event);
+      last_clicked.concept_id = concept.id;
+      last_clicked.col = col;
+      last_clicked.row = row;
+      last_tile = null;  // force update
+      updateCanvases(concept, col, row);
+    };
+    canvas.addEventListener('click', clickHandler);
+    canvas.addEventListener('mousemove', moveHandler);
+    canvas.addEventListener('mouseleave', leaveHandler);
+    canvas.addEventListener('touchstart', clickHandler);
+    canvas.addEventListener('touchmove', clickHandler);
+  });
+  
   // slider event listener
   slider.addEventListener('input', event => {
     const value = event.target.value;
     slider_value.textContent = value;
     concept.step = value;
-    concept.img.src = `representations/${concept.name}/${concept.step}.png`;
-    updateCanvasesLastClicked();
+    concept.img.src = `representations/${current_model.short}/${concept.name}/${concept.step}.png`;
+    updateCanvasesWithLastClicked();
   });
 
   // concept name select event listener
   title_select.addEventListener('change', event => {
     const value = event.target.value;
-    const prompt = available_concepts.find(x => x.name === value).prompt;
-    title_text.textContent = value;
-    prompt_p.textContent = prompt;
     concept.name = value;
-    concept.img.src = `representations/${concept.name}/${concept.step}.png`;
-    concept.repr = null;
-    fetch(`representations/${concept.name}/repr.bin`)
-      .then(response => response.arrayBuffer())
-      .then(buffer => {
-        const repr = new Float32Array(buffer);
-        console.log(`Fetched repr for ${concept.name} with length ${repr.length}`);
-        concept.repr = repr;
-        updateCanvasesLastClicked();
-      });
-    updateCanvasesLastClicked();
+    concept.update();
   });
 
-  // get convas contexts
-  concept.image_ctx = concept.image_canvas.getContext('2d');
-  concept.tile_ctx = concept.tile_canvas.getContext('2d');
-
-  // load image
-  concept.img = new Image();  
-  concept.img.src = `representations/${concept.name}/${concept.step}.png`;
-  concept.img.onload = function() {
-    concept.image_ctx.globalCompositeOperation = 'destination-over';
-    concept.image_ctx.drawImage(concept.img, 0, 0, concept.image_ctx.canvas.width, concept.image_ctx.canvas.height);
-    concept.image_ctx.globalCompositeOperation = 'source-over';
-    updateCanvasesLastClicked();
-  }
-
-  // load representation
-  let repr = null;
-  fetch(`representations/${concept.name}/repr.bin`)
-    .then(response => response.arrayBuffer())
-    .then(buffer => {
-      const repr = new Float32Array(buffer);
-      console.log(`Fetched repr for ${concept.name} with length ${repr.length}`);
-      concept.repr = repr;
-    });
+  // concept is ready
   return concept;
 }
 
 
 
 function cosineSimilarity(repr1, offset1, repr2, offset2) {
+  const n = current_model.hspace_spatial;
+  const m = current_model.hspace_channels;
   let dotProduct = 0.0;
   let normA = 0.0;
   let normB = 0.0;
 
-  for (let i = 0; i < 1280; i++) {
-    const i1 = offset1 + i*8*8;
-    const i2 = offset2 + i*8*8;
+  for (let i = 0; i < m; i++) {
+    const i1 = offset1 + i*n*n;
+    const i2 = offset2 + i*n*n;
     // if (i1 >= 81920 || i2 >= 81920) {
     //   console.error(`index too high: i1: ${i1}, i2: ${i2}`);
     // }
@@ -225,10 +270,12 @@ function cosineSimilarity(repr1, offset1, repr2, offset2) {
 
 
 function euclideanDistance(repr1, offset1, repr2, offset2) {
+  const n = current_model.hspace_spatial;
+  const m = current_model.hspace_channels;
   let sum = 0.0;
-  for (let i = 0; i < 1280; i++) {
-    const i1 = offset1 + i*8*8;
-    const i2 = offset2 + i*8*8;
+  for (let i = 0; i < m; i++) {
+    const i1 = offset1 + i*n*n;
+    const i2 = offset2 + i*n*n;
     sum += Math.pow(repr1[i1] - repr2[i2], 2);
   }
 
@@ -237,10 +284,12 @@ function euclideanDistance(repr1, offset1, repr2, offset2) {
 
 
 function manhattanDistance(repr1, offset1, repr2, offset2) {
+  const n = current_model.hspace_spatial;
+  const m = current_model.hspace_channels;
   let sum = 0.0;
-  for (let i = 0; i < 1280; i++) {
-    const i1 = offset1 + i*8*8;
-    const i2 = offset2 + i*8*8;
+  for (let i = 0; i < m; i++) {
+    const i1 = offset1 + i*n*n;
+    const i2 = offset2 + i*n*n;
     sum += Math.abs(repr1[i1] - repr2[i2]);
   }
   return sum;
@@ -249,19 +298,24 @@ function manhattanDistance(repr1, offset1, repr2, offset2) {
 
 // calculate similarities based on the selected similarity measure and tile
 function calcSimilarities(base_concept, col, row, concept) {
+  const n = current_model.hspace_spatial;
+  const m = current_model.hspace_channels;
+  const step1 = base_concept.step - 1;
+  const step2 = concept.step - 1;
+
   // check if representations are loaded
   if (!base_concept.repr || !concept.repr) {
     console.log(`Representations not loaded (base_concept: ${!!base_concept.repr}, other concept: ${!!concept.repr})`);
-    return Array(GRID_SIZE*GRID_SIZE).fill(0);
+    return Array(n*n).fill(0);
   }
 
   // helper function to calculate similarities for all tiles
   const calc = measure => {
     const x = [];
-    for (let i = 0; i < GRID_SIZE; i++) {
-      for (let j = 0; j < GRID_SIZE; j++) {
-        const offset1 = base_concept.step*1280*8*8 + row*8 + col;
-        const offset2 = concept.step*1280*8*8 + j*8 + i;
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        const offset1 = step1*m*n*n + row*n + col;
+        const offset2 = step2*m*n*n + j*n + i;
         const similarity = measure(base_concept.repr, offset1, concept.repr, offset2);
         x.push(similarity);
       }
@@ -293,19 +347,19 @@ function loadImage(ctx, img) {
 
 // Function to draw the grid
 function drawGrid(ctx) {
-  const tile_size = ctx.canvas.width / GRID_SIZE;
+  const tile_size = ctx.canvas.width / current_model.hspace_spatial;
   ctx.strokeStyle = 'black';
   ctx.lineWidth = 2;
   ctx.beginPath();
 
   // Draw the vertical lines
-  for (let i = 1; i < GRID_SIZE; i++) {
+  for (let i = 1; i < current_model.hspace_spatial; i++) {
     ctx.moveTo(i * tile_size, 0);
     ctx.lineTo(i * tile_size, ctx.canvas.height);
   }
 
   // Draw the horizontal lines
-  for (let i = 1; i < GRID_SIZE; i++) {
+  for (let i = 1; i < current_model.hspace_spatial; i++) {
     ctx.moveTo(0, i * tile_size);
     ctx.lineTo(ctx.canvas.width, i * tile_size);
   }
@@ -316,8 +370,9 @@ function drawGrid(ctx) {
 
 // Event listener for mouse movement over canvas
 function updateCanvases(base_concept, col, row) {
+  const n = current_model.hspace_spatial;
   // Check if the mouse is inside the canvas
-  if (col < 0 || col >= GRID_SIZE || row < 0 || row >= GRID_SIZE) return;
+  if (col < 0 || col >= n || row < 0 || row >= n) return;
 
   // Check if the tile has changed
   const curr_tile = `${base_concept.id}-${col}-${row}`;
@@ -326,7 +381,7 @@ function updateCanvases(base_concept, col, row) {
 
   // Update the canvases
   for (const concept of concepts) {
-    const tile_size = concept.image_ctx.canvas.width / GRID_SIZE;
+    const tile_size = concept.image_ctx.canvas.width / n;
     // update image canvas
     const img_ctx = concept.image_ctx;
     img_ctx.clearRect(0, 0, img_ctx.canvas.width, img_ctx.canvas.height);
@@ -346,9 +401,9 @@ function updateCanvases(base_concept, col, row) {
     // update tile canvas
     const similarities = calcSimilarities(base_concept, col, row, concept);
     concept.tile_ctx.clearRect(0, 0, concept.tile_ctx.canvas.width, concept.tile_ctx.canvas.height);
-    for (let i = 0; i < GRID_SIZE; i++) {
-      for (let j = 0; j < GRID_SIZE; j++) {
-        const similarity = similarities[i * GRID_SIZE + j];
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        const similarity = similarities[i * n + j];
         concept.tile_ctx.fillStyle = similarity > 0 ? `rgba(255, 165, 0, ${similarity})` : `rgba(0, 165, 255, ${-similarity})`;
         concept.tile_ctx.fillRect(i * tile_size, j * tile_size, tile_size, tile_size);
       }
@@ -362,10 +417,16 @@ function updateCanvases(base_concept, col, row) {
 
 
 // force update of all canvases with the last clicked tile as the base
-function updateCanvasesLastClicked() {
+function updateCanvasesWithLastClicked() {
   last_tile = null;  // force update
   updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
 }
+
+
+
+function updateModelDescription(model) {
+  document.getElementById('model-description').textContent = `The examples below are for ${model.name}, which has a h-space dimension of (${model.steps},${model.hspace_channels},${model.hspace_spatial},${model.hspace_spatial}), i.e. ${model.steps} steps, ${model.hspace_channels} channels, and ${model.hspace_spatial}x${model.hspace_spatial} spatial resolution.`;
+};
 
 
 // get mouse/touch position on canvas
@@ -374,61 +435,57 @@ function getMousePos(canvas, event) {
   const rect = canvas.getBoundingClientRect();
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
-  const col = Math.floor(2 * x / canvas.width * GRID_SIZE);
-  const row = Math.floor(2 * y / canvas.width * GRID_SIZE);
+  const col = Math.floor(2 * x / canvas.width * current_model.hspace_spatial);
+  const row = Math.floor(2 * y / canvas.width * current_model.hspace_spatial);
   return { col, row };
 }
 
 
 function init() {
-  // setup concepts
-  fetch('representations/outputs.txt')
-    .then(response => response.text())
-    .then(text => {
-      text.split('\n').forEach((line, i) => {
-        const [name, ...prompt] = line.split(' ');
-        available_concepts.push({ name, prompt: prompt.join(' ')});
+  // load available prompts/concepts
+  const prompts_promise = fetch('representations/prompts.json')
+    .then(response => response.json())
+    .then(data => {
+      Object.entries(data).forEach(([name, prompt], i) => {
+        available_concepts.push({ name, prompt});
       });
     })
+  
+  // load available models
+  const models_promise = fetch('representations/models.json')
+    .then(response => response.json())
+    .then(data => {
+      available_models.push(...data);
+      available_models.forEach(model => {
+        createElem('option', { value: model.short, textContent: model.short }, document.getElementById('model-to-use'));
+      });
+      current_model = available_models[0];
+      updateModelDescription(current_model);
+    })
+  
+  // initialize concepts
+  Promise.all([prompts_promise, models_promise])
     .then(() => {
       initial_concepts.forEach((index, i) => {
         concepts.push(setupConcept(index, i));
       });
     })
     .then(() => {
-      concepts.forEach((concept, concept_index) => {
-        loadImage(concept.image_ctx, concept.img);
-        drawGrid(concept.image_ctx);
-        [concept.image_canvas, concept.tile_canvas].forEach(canvas => {
-          const moveHandler = function(event) {
-            const { col, row } = getMousePos(canvas, event);
-            updateCanvases(concept, col, row);
-          };
-          const leaveHandler = function(event) {
-            updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
-          };
-          const clickHandler = function(event) {
-            const { col, row } = getMousePos(canvas, event);
-            last_clicked.concept_id = concept.id;
-            last_clicked.col = col;
-            last_clicked.row = row;
-            last_tile = null;  // force update
-            updateCanvases(concept, col, row);
-          };
-          canvas.addEventListener('click', clickHandler);
-          canvas.addEventListener('mousemove', moveHandler);
-          canvas.addEventListener('mouseleave', leaveHandler);
-          canvas.addEventListener('touchstart', clickHandler);
-          canvas.addEventListener('touchmove', clickHandler);
-        });
-      });
+      // update canvases on load with a delay
+      setTimeout(updateCanvasesWithLastClicked, 100);
     });
+  
+  // setup model change event listener
+  document.getElementById('model-to-use').addEventListener('change', event => {
+    const model = available_models.find(x => x.short === event.target.value);
+    current_model = model;
+    updateModelDescription(model);
+    concepts.forEach(concept => concept.update());
+    updateCanvasesWithLastClicked();
+  });
 
   // setup similarity measure change event listener
-  document.getElementById('similarity-measure').addEventListener('change', event => {
-    last_tile = null;
-    updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
-  });
+  document.getElementById('similarity-measure').addEventListener('change', updateCanvasesWithLastClicked);
 
   // reload on resize to update canvas size
   window.addEventListener('resize', () => {
@@ -443,12 +500,6 @@ function init() {
         updateCanvases(concept, last_clicked.col, last_clicked.row);
       });
   });
-
-  // update canvases on load with a delay
-  setTimeout(() => {
-    updateCanvasesLastClicked();
-  }, 200);
-
 }
 
 
