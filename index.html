@@ -174,13 +174,13 @@ function setupConcept({ index, initial_step }, i) {
     slider_value.textContent = concept.step;
 
     // update image und representation
-    concept.img.src = `representations/${current_model.short}/${concept.name}/${concept.step}.png`;
+    concept.img.src = `representations/${current_model.short}/${concept.name}/${concept.step}.jpg`;
     getRepr();
   }
 
   // load image
   concept.img = new Image();  
-  concept.img.src = `representations/${current_model.short}/${concept.name}/${concept.step}.png`;
+  concept.img.src = `representations/${current_model.short}/${concept.name}/${concept.step}.jpg`;
   concept.img.onload = function() {
     concept.image_ctx.globalCompositeOperation = 'destination-over';
     concept.image_ctx.drawImage(concept.img, 0, 0, concept.image_ctx.canvas.width, concept.image_ctx.canvas.height);
@@ -228,7 +228,7 @@ function setupConcept({ index, initial_step }, i) {
     const value = event.target.value;
     slider_value.textContent = value;
     concept.step = value;
-    concept.img.src = `representations/${current_model.short}/${concept.name}/${concept.step}.png`;
+    concept.img.src = `representations/${current_model.short}/${concept.name}/${concept.step}.jpg`;
     updateCanvasesWithLastClicked();
   });
 
