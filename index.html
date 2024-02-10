@@ -489,9 +489,20 @@ function init() {
   
   // setup model change event listener
   document.getElementById('model-to-use').addEventListener('change', event => {
+    const prev_hspace_spatial = current_model.hspace_spatial;
+
+    // update current model and description
     const model = available_models.find(x => x.short === event.target.value);
     current_model = model;
     updateModelDescription(model);
+
+    // update last clicked if spatial resolution changed
+    if (current_model.hspace_spatial !== prev_hspace_spatial) {
+      last_clicked.col = Math.floor(last_clicked.col * current_model.hspace_spatial / prev_hspace_spatial);
+      last_clicked.row = Math.floor(last_clicked.row * current_model.hspace_spatial / prev_hspace_spatial);
+    }
+
+    // update concepts and canvases
     concepts.forEach(concept => concept.update());
     updateCanvasesWithLastClicked();
   });
