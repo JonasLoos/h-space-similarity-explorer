@@ -76,8 +76,9 @@ canvas {
       Similarity measure:
       <select id="similarity-measure">
         <option value="cosine">Cosine</option>
-        <option value="euclidean">Euclidean</option>
-        <option value="manhattan">Manhattan</option>
+        <option value="manhattan">Manhattan (L1)</option>
+        <option value="euclidean">Euclidean (L2)</option>
+        <option value="chebyshev">Chebyshev (L∞)</option>
       </select>
     </p>
     <p id="model-description">
@@ -304,6 +305,20 @@ function manhattanDistance(repr1, offset1, repr2, offset2) {
 }
 
 
+function chebyshevDistance(repr1, offset1, repr2, offset2) {
+  const n = current_model.hspace_spatial;
+  const m = current_model.hspace_channels;
+  let max = 0.0;
+  for (let i = 0; i < m; i++) {
+    const i1 = offset1 + i*n*n;
+    const i2 = offset2 + i*n*n;
+    const diff = Math.abs(repr1[i1] - repr2[i2]);
+    if (diff > max) max = diff;
+  }
+  return max;
+}
+
+
 // calculate similarities based on the selected similarity measure and tile
 function calcSimilarities(base_concept, col, row, concept) {
   const n = current_model.hspace_spatial;
@@ -341,6 +356,10 @@ function calcSimilarities(base_concept, col, row, concept) {
     return differences.map(x => 1 - x / max);
   } else if (measure_str === 'manhattan') {
     const differences = calc(manhattanDistance);
+    const max = Math.max(...differences);
+    return differences.map(x => 1 - x / max);
+  } else if (measure_str === 'chebyshev') {
+    const differences = calc(chebyshevDistance);
     const max = Math.max(...differences);
     return differences.map(x => 1 - x / max);
   }
