@@ -347,12 +347,6 @@ function calcSimilarities(base_concept, col, row, concept) {
 }
 
 
-
-// Utility function to load an image
-function loadImage(ctx, img) {
-  ctx.drawImage(img, 0, 0, ctx.canvas.width, ctx.canvas.height);
-}
-
 // Function to draw the grid
 function drawGrid(ctx) {
   const tile_size = ctx.canvas.width / current_model.hspace_spatial;
@@ -376,7 +370,7 @@ function drawGrid(ctx) {
 }
 
 
-// Event listener for mouse movement over canvas
+// Update the canvas highlightings based on the mouse position
 function updateCanvases(base_concept, col, row) {
   const n = current_model.hspace_spatial;
   // Check if the mouse is inside the canvas
@@ -393,9 +387,10 @@ function updateCanvases(base_concept, col, row) {
     // update image canvas
     const img_ctx = concept.image_ctx;
     img_ctx.clearRect(0, 0, img_ctx.canvas.width, img_ctx.canvas.height);
-    loadImage(img_ctx, concept.img);
+    img_ctx.drawImage(concept.img, 0, 0, img_ctx.canvas.width, img_ctx.canvas.height);
     drawGrid(img_ctx);
     if (concept === base_concept) {
+      // highlight the currently selected tile
       img_ctx.strokeStyle = 'rgba(255, 165, 0, 1)';
       img_ctx.lineWidth = 2;
       img_ctx.strokeRect(col * tile_size, row * tile_size, tile_size, tile_size);
@@ -403,6 +398,7 @@ function updateCanvases(base_concept, col, row) {
       img_ctx.fillRect(col * tile_size, row * tile_size, tile_size, tile_size);
     }
     if (last_clicked.concept_id === concept.id && !(last_clicked.col === col && last_clicked.row === row && concept === base_concept)) {
+      // highlight the last clicked tile
       img_ctx.fillStyle = 'rgba(255, 165, 165, 0.7)';
       img_ctx.fillRect(last_clicked.col * tile_size, last_clicked.row * tile_size, tile_size, tile_size);
     }
@@ -511,10 +507,8 @@ function init() {
         concept.image_canvas.height = canvas_size;
         concept.tile_canvas.width = canvas_size;
         concept.tile_canvas.height = canvas_size;
-        loadImage(concept.image_ctx, concept.img);
-        drawGrid(concept.image_ctx);
-        updateCanvases(concept, last_clicked.col, last_clicked.row);
       });
+      updateCanvasesWithLastClicked();
   });
 }
 
