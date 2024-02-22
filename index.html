@@ -76,6 +76,8 @@ canvas {
       Similarity measure:
       <select id="similarity-measure">
         <option value="cosine">Cosine</option>
+        <option value="cosine_centered">Cosine (centered)</option>
+        <!-- <option value="soft_cosine">Soft Cosine</option> -->
         <option value="manhattan">Manhattan (L1)</option>
         <option value="euclidean">Euclidean (L2)</option>
         <option value="chebyshev">Chebyshev (L∞)</option>
@@ -147,16 +149,36 @@ function setupConcept({ index, initial_step }, i) {
   concept.image_ctx = concept.image_canvas.getContext('2d');
   concept.tile_ctx = concept.tile_canvas.getContext('2d');
 
-
+  // helper function to load the representation
   const getRepr = () => {
     concept.repr = null;
     fetch(`representations/${current_model.short}/${concept.name}/repr.bin`)
       .then(response => response.arrayBuffer())
       .then(buffer => {
+
+        // store representation
         const repr = new Float32Array(buffer);
         const num_nans = repr.reduce((a, b) => a + (isNaN(b) ? 1 : 0), 0);
         console.log(`Fetched repr for ${concept.name} with length ${repr.length} with ${num_nans} NaNs`);
         concept.repr = repr;
+
+        // calculate means
+        const m = current_model.hspace_channels;
+        const n = current_model.hspace_spatial;
+        const means = new Float32Array(m*current_model.steps);
+        for (let step = 0; step < current_model.steps; step++) {
+          for (let i = 0; i < m; i++) {
+            const i_base = step*m + i;
+            const i_repr = (step*m + i)*n*n;
+            for (let j = 0; j < n*n; j++) {
+              means[i_base] += repr[i_repr + j];
+            }
+            means[i_base] /= n*n;
+          }
+          concept.repr_means = means;
+        }
+
+        // update convases as the representations are available now
         updateCanvasesWithLastClicked();
       });
   };
@@ -246,7 +268,10 @@ function setupConcept({ index, initial_step }, i) {
 
 
 
+// calculate the cosine similarity between two representations
 function cosineSimilarity(repr1, offset1, repr2, offset2) {
+
+  // init
   const n = current_model.hspace_spatial;
   const m = current_model.hspace_channels;
   let dotProduct = 0.0;
@@ -256,12 +281,6 @@ function cosineSimilarity(repr1, offset1, repr2, offset2) {
   for (let i = 0; i < m; i++) {
     const i1 = offset1 + i*n*n;
     const i2 = offset2 + i*n*n;
-    // if (i1 >= 81920 || i2 >= 81920) {
-    //   console.error(`index too high: i1: ${i1}, i2: ${i2}`);
-    // }
-    // if (isNaN(repr1[i1]) || isNaN(repr2[i2])) {
-    //   console.error(`NaN: i1: ${i1}, i2: ${i2}, repr1[i1]: ${repr1[i1]}, repr2[i2]: ${repr2[i2]}`);
-    // }
     dotProduct += repr1[i1] * repr2[i2];
     normA += repr1[i1] * repr1[i1];
     normB += repr2[i2] * repr2[i2];
@@ -278,6 +297,89 @@ function cosineSimilarity(repr1, offset1, repr2, offset2) {
 }
 
 
+// calculate the soft cosine similarity between two representations
+// with similarity matrix $s_{ij} := min(|a_i-a_j|,|b_i-b_j|) / (max(|a_i-a_j|,|b_i-b_j|) + \epsilon)$
+// this is slow, tends to nan and doesn't really seem to work
+function softCosineSimilarity(repr1, offset1, repr2, offset2) {
+
+  // init
+  const n = current_model.hspace_spatial;
+  const m = current_model.hspace_channels;
+  let dotProduct = 0.0;
+  let normA = 0.0;
+  let normB = 0.0;
+
+  // get max values for regulatization for numerical stability
+  let max = 0.0;
+  for (let i = 0; i < m; i++) {
+    const i1 = offset1 + i*n*n;
+    const i2 = offset2 + i*n*n;
+    max = Math.max(max, Math.abs(repr1[i1]), Math.abs(repr2[i2]));
+  }
+
+  // TODO: two nested loops are very slow
+  for (let i = 0; i < m; i++) {
+    const i1 = offset1 + i*n*n;
+    const i2 = offset2 + i*n*n;
+    const x1i = repr1[i1] / max;
+    const x2i = repr2[i2] / max;
+    for (let j = 0; j < m; j++) {
+      const j1 = offset1 + j*n*n;
+      const j2 = offset2 + j*n*n;
+      const x1j = repr1[j1] / max;
+      const x2j = repr2[j2] / max;
+      const diff1 = Math.abs(x1i - x1j);
+      const diff2 = Math.abs(x2i - x2j);
+      const element_similarity = i==j || Math.min(diff1, diff2) / ((Math.max(diff1, diff2)) + 1e-10);
+      dotProduct += element_similarity * x1i * x2j;
+      normA += element_similarity * x1i * x1j;
+      normB += element_similarity * x2i * x2j;
+    }
+  }
+
+  normA = Math.sqrt(normA);
+  normB = Math.sqrt(normB);
+
+  if (normA === 0 || normB === 0) {
+    throw new Error('One of the vectors is zero');
+  }
+
+  return dotProduct / (normA * normB) * max;
+}
+
+
+// center the representations and then calculate cosine similarity
+function centeredCosineSimilarity(repr1, offset1, means1, repr2, offset2, means2) {
+
+  // init
+  const n = current_model.hspace_spatial;
+  const m = current_model.hspace_channels;
+  let dotProduct = 0.0;
+  let normA = 0.0;
+  let normB = 0.0;
+
+  // calculate centered cosine similarity
+  for (let i = 0; i < m; i++) {
+    const i1 = offset1 + i*n*n;
+    const i2 = offset2 + i*n*n;
+    const mean = (means1[i] + means2[i]) / 2;  // use the mean over both representations
+    dotProduct += (repr1[i1] - mean) * (repr2[i2] - mean);
+    normA += Math.pow(repr1[i1] - mean, 2);
+    normB += Math.pow(repr2[i2] - mean, 2);
+  }
+
+  normA = Math.sqrt(normA);
+  normB = Math.sqrt(normB);
+
+  if (normA === 0 || normB === 0) {
+    throw new Error('One of the vectors is zero');
+  }
+
+  return dotProduct / (normA * normB);
+}
+
+
+// calculate the euclidean distance (L1) between two representations
 function euclideanDistance(repr1, offset1, repr2, offset2) {
   const n = current_model.hspace_spatial;
   const m = current_model.hspace_channels;
@@ -292,6 +394,7 @@ function euclideanDistance(repr1, offset1, repr2, offset2) {
 }
 
 
+// calculate the manhattan distance (L2) between two representations
 function manhattanDistance(repr1, offset1, repr2, offset2) {
   const n = current_model.hspace_spatial;
   const m = current_model.hspace_channels;
@@ -305,6 +408,7 @@ function manhattanDistance(repr1, offset1, repr2, offset2) {
 }
 
 
+// calculate the chebyshev distance (L∞) between two representations
 function chebyshevDistance(repr1, offset1, repr2, offset2) {
   const n = current_model.hspace_spatial;
   const m = current_model.hspace_channels;
@@ -350,6 +454,10 @@ function calcSimilarities(base_concept, col, row, concept) {
   const measure_str = document.getElementById('similarity-measure').value;
   if (measure_str === 'cosine') {
     return calc(cosineSimilarity);
+  } else if (measure_str === 'soft_cosine') {
+    return calc(softCosineSimilarity);
+  } else if (measure_str === 'cosine_centered') {
+    return calc((r1,o1,r2,o2) => centeredCosineSimilarity(r1,o1,base_concept.repr_means.subarray(step1*m,step1*m+m),r2,o2,concept.repr_means.subarray(step2*m,step2*m+m)));
   } else if (measure_str === 'euclidean') {
     const differences =  calc(euclideanDistance);
     const max = Math.max(...differences);
