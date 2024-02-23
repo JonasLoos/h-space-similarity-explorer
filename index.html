@@ -187,17 +187,13 @@ function setupConcept({ index, initial_step }, i) {
         const { steps, m, n } = current_model.getShapes();
         const means = new Float32Array(m*steps);
         for (let step = 0; step < steps; step++) {
-          for (let i = 0; i < m; i++) {
-            const i_base = step*m + i;
-            const i_repr = (step*m + i)*n*n;
-            for (let j = 0; j < n*n; j++) {
-              means[i_base] += repr[i_repr + j];
+          for (let i = 0; i < n*n; i++) {
+            for (let j = 0; j < m; j++) {
+              means[step*m + j] += repr[step*m*n*n + i*n + j] / (n*n);
             }
-            means[i_base] /= n*n;
           }
-          concept.repr_means = means;
         }
-
+        concept.repr_means = means;
         // update convases as the representations are available now
         updateCanvasesWithLastClicked();
       });
@@ -254,8 +250,9 @@ function setupConcept({ index, initial_step }, i) {
       // log clicked tile
       const { m, n } = current_model.getShapes();
       const block_repr = [];
+      const offset = (concept.step-1)*m*n*n + row*n*m + col*m;
       for (let i = 0; i < m; i++) {
-        block_repr.push(concept.repr[(concept.step-1)*m*n*n + i*n*n + row*n + col]);
+        block_repr.push(concept.repr[offset + i]);
       }
       console.log(`Clicked on ${concept.name} at (${col},${row})`, block_repr);
     };
@@ -292,14 +289,14 @@ function setupConcept({ index, initial_step }, i) {
 function cosineSimilarity(repr1, offset1, repr2, offset2) {
 
   // init
-  const { m, n } = current_model.getShapes();
+  const { m } = current_model.getShapes();
   let dotProduct = 0.0;
   let normA = 0.0;
   let normB = 0.0;
 
   for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i*n*n;
-    const i2 = offset2 + i*n*n;
+    const i1 = offset1 + i;
+    const i2 = offset2 + i;
     dotProduct += repr1[i1] * repr2[i2];
     normA += repr1[i1] * repr1[i1];
     normB += repr2[i2] * repr2[i2];
@@ -324,7 +321,7 @@ function cosineSimilarity(repr1, offset1, repr2, offset2) {
 function softCosineSimilarity(repr1, offset1, repr2, offset2) {
 
   // init
-  const { m, n } = current_model.getShapes();
+  const { m } = current_model.getShapes();
   let dotProduct = 0.0;
   let normA = 0.0;
   let normB = 0.0;
@@ -332,20 +329,20 @@ function softCosineSimilarity(repr1, offset1, repr2, offset2) {
   // get max values for regulatization for numerical stability
   let max = 0.0;
   for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i*n*n;
-    const i2 = offset2 + i*n*n;
+    const i1 = offset1 + i;
+    const i2 = offset2 + i;
     max = Math.max(max, Math.abs(repr1[i1]), Math.abs(repr2[i2]));
   }
 
   // TODO: two nested loops are very slow
   for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i*n*n;
-    const i2 = offset2 + i*n*n;
+    const i1 = offset1 + i;
+    const i2 = offset2 + i;
     const x1i = repr1[i1] / max;
     const x2i = repr2[i2] / max;
     for (let j = 0; j < m; j++) {
-      const j1 = offset1 + j*n*n;
-      const j2 = offset2 + j*n*n;
+      const j1 = offset1 + j;
+      const j2 = offset2 + j;
       const x1j = repr1[j1] / max;
       const x2j = repr2[j2] / max;
       const diff1 = Math.abs(x1i - x1j);
@@ -372,16 +369,17 @@ function softCosineSimilarity(repr1, offset1, repr2, offset2) {
 function centeredCosineSimilarity(repr1, offset1, means1, repr2, offset2, means2) {
 
   // init
-  const { m, n } = current_model.getShapes();
+  const { m } = current_model.getShapes();
   let dotProduct = 0.0;
   let normA = 0.0;
   let normB = 0.0;
 
   // calculate centered cosine similarity
   for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i*n*n;
-    const i2 = offset2 + i*n*n;
+    const i1 = offset1 + i;
+    const i2 = offset2 + i;
     const mean = (means1[i] + means2[i]) / 2;  // use the mean over both representations
+    if (i == 0) console.log('mean:', mean);
     dotProduct += (repr1[i1] - mean) * (repr2[i2] - mean);
     normA += Math.pow(repr1[i1] - mean, 2);
     normB += Math.pow(repr2[i2] - mean, 2);
@@ -400,11 +398,11 @@ function centeredCosineSimilarity(repr1, offset1, means1, repr2, offset2, means2
 
 // calculate the euclidean distance (L1) between two representations
 function euclideanDistance(repr1, offset1, repr2, offset2) {
-  const { m, n } = current_model.getShapes();
+  const { m } = current_model.getShapes();
   let sum = 0.0;
   for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i*n*n;
-    const i2 = offset2 + i*n*n;
+    const i1 = offset1 + i;
+    const i2 = offset2 + i;
     sum += Math.pow(repr1[i1] - repr2[i2], 2);
   }
 
@@ -414,11 +412,11 @@ function euclideanDistance(repr1, offset1, repr2, offset2) {
 
 // calculate the manhattan distance (L2) between two representations
 function manhattanDistance(repr1, offset1, repr2, offset2) {
-  const { m, n } = current_model.getShapes();
+  const { m } = current_model.getShapes();
   let sum = 0.0;
   for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i*n*n;
-    const i2 = offset2 + i*n*n;
+    const i1 = offset1 + i;
+    const i2 = offset2 + i;
     sum += Math.abs(repr1[i1] - repr2[i2]);
   }
   return sum;
@@ -427,11 +425,11 @@ function manhattanDistance(repr1, offset1, repr2, offset2) {
 
 // calculate the chebyshev distance (L∞) between two representations
 function chebyshevDistance(repr1, offset1, repr2, offset2) {
-  const { m, n } = current_model.getShapes();
+  const { m } = current_model.getShapes();
   let max = 0.0;
   for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i*n*n;
-    const i2 = offset2 + i*n*n;
+    const i1 = offset1 + i;
+    const i2 = offset2 + i;
     const diff = Math.abs(repr1[i1] - repr2[i2]);
     if (diff > max) max = diff;
   }
@@ -456,8 +454,8 @@ function calcSimilarities(base_concept, col, row, concept) {
     const x = [];
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < n; j++) {
-        const offset1 = step1*m*n*n + row*n + col;
-        const offset2 = step2*m*n*n + j*n + i;
+        const offset1 = step1*m*n*n + row*n*m + col*m;
+        const offset2 = step2*m*n*n +   j*n*m +   i*m;
         const similarity = measure(base_concept.repr, offset1, concept.repr, offset2);
         x.push(similarity);
       }
