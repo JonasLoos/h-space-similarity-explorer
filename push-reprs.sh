@@ -17,7 +17,10 @@ trash .git
 git init
 git remote add origin $git_remote
 
-# add files and push
-git add -f *
-git commit -m "Addding representations"
-git push -f origin main
+# go through all files and folder in the folder and add them to the git
+# this is necessary to stay below the 2GB upload limit of Github
+for file in *; do
+  git add -f $file
+  git commit -m "Addding $file"
+  git push -f -u origin main
+done
