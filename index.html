@@ -19,6 +19,17 @@
   margin: 1em;
   line-height: 1.2em;
 }
+.select-container {
+  margin: .5em;
+  display: flex;
+  flex-wrap: wrap;
+}
+.select-group {
+  margin: .5em;
+}
+.select-group span {
+  margin-right: .3em;
+}
 #canvas-container {
   margin: 0 auto;
   margin-bottom: 2em;
@@ -70,23 +81,27 @@ canvas {
       The h-space is the output of the midblock of the diffusion unet, however, you can also explore the output from other positions in the unet.
       If you want to try this for your own prompts, check out the source code <a href="https://github.com/JonasLoos/h-space-similarity-explorer">here</a>.
     </p>
-    <p>
-      Model:
-      <select id="model-to-use">
-      </select>
-      Position: 
-      <select id="position-to-use">
-      </select>
-      Similarity measure:
-      <select id="similarity-measure">
-        <option value="cosine">Cosine</option>
-        <option value="cosine_centered">Cosine (centered)</option>
-        <!-- <option value="soft_cosine">Soft Cosine</option> -->
-        <option value="manhattan">Manhattan (L1)</option>
-        <option value="euclidean">Euclidean (L2)</option>
-        <option value="chebyshev">Chebyshev (L∞)</option>
-      </select>
-    </p>
+    <div class="select-container">
+      <div class="select-group">
+        <span>Model:</span>
+        <select id="model-to-use"></select>
+      </div>
+      <div class="select-group">
+        <span>Position:</span>
+        <select id="position-to-use"></select>
+      </div>
+      <div class="select-group">
+        <span>Similarity measure:</span>
+        <select id="similarity-measure">
+          <option value="cosine">Cosine</option>
+          <option value="cosine_centered">Cosine (centered)</option>
+          <!-- <option value="soft_cosine">Soft Cosine</option> -->
+          <option value="manhattan">Manhattan (L1)</option>
+          <option value="euclidean">Euclidean (L2)</option>
+          <option value="chebyshev">Chebyshev (L∞)</option>
+        </select>
+      </div>
+    </div>    
     <p id="model-description">
     </p>
     <p>
