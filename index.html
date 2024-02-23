@@ -98,7 +98,7 @@ canvas {
 
 // initialize variables
 let last_tile = null;  // remember the last tile to avoid redundant updates
-let last_clicked = { concept_id: 0, col: 0, row: 0 };  // remember the last clicked tile
+let last_clicked = { concept_id: 0, col: 9, row: 6 };  // remember the last clicked tile
 const available_models = [];
 let current_model = null;
 let available_positions = {};
@@ -515,7 +515,6 @@ function updateCanvases(base_concept, col, row) {
     // update image canvas
     const img_ctx = concept.image_ctx;
     img_ctx.clearRect(0, 0, img_ctx.canvas.width, img_ctx.canvas.height);
-    console.log('img', concept.img)
     img_ctx.drawImage(concept.img, 0, 0, img_ctx.canvas.width, img_ctx.canvas.height);
     drawGrid(img_ctx);
     if (concept === base_concept) {
@@ -633,18 +632,18 @@ function init() {
   
   // setup model change event listener
   document.getElementById('model-to-use').addEventListener('change', event => {
-    const prev_hspace_spatial = current_model.hspace_spatial;
+    const prev_hspace_spatial = current_model.getShapes().n;
 
     // update current model, position selector, and description
-    const model = available_models.find(x => x.short === event.target.value);
-    current_model = model;
+    current_model = available_models.find(x => x.short === event.target.value);
     updatePositionSelector();
     updateModelDescription();
 
     // update last clicked if spatial resolution changed
-    if (current_model.hspace_spatial !== prev_hspace_spatial) {
-      last_clicked.col = Math.floor(last_clicked.col * current_model.hspace_spatial / prev_hspace_spatial);
-      last_clicked.row = Math.floor(last_clicked.row * current_model.hspace_spatial / prev_hspace_spatial);
+    const { n } = current_model.getShapes();
+    if (n !== prev_hspace_spatial) {
+      last_clicked.col = Math.floor(last_clicked.col * n / prev_hspace_spatial);
+      last_clicked.row = Math.floor(last_clicked.row * n / prev_hspace_spatial);
     }
 
     // update concepts and canvases
@@ -654,8 +653,20 @@ function init() {
 
   // setup position change event listener
   document.getElementById('position-to-use').addEventListener('change', event => {
+    const prev_hspace_spatial = current_model.getShapes().n;
+
+    // update current position and description
     current_position = event.target.value;
     updateModelDescription();
+
+    // update last clicked if spatial resolution changed
+    const { n } = current_model.getShapes();
+    if (n !== prev_hspace_spatial) {
+      last_clicked.col = Math.floor(last_clicked.col * n / prev_hspace_spatial);
+      last_clicked.row = Math.floor(last_clicked.row * n / prev_hspace_spatial);
+    }
+
+    // update concepts and canvases
     concepts.forEach(concept => concept.update());
     updateCanvasesWithLastClicked();
   });
