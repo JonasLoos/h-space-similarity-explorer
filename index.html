@@ -67,11 +67,15 @@ canvas {
     <h1 style="text-align: center;">H-Space similarity explorer</h1>
     <p>
       This is a simple tool to explore the similarity between the representations of different concepts at different spatial positions in the h-space of diffusion models.
+      The h-space is the output of the midblock of the diffusion unet, however, you can also explore the output from other positions in the unet.
       If you want to try this for your own prompts, check out the source code <a href="https://github.com/JonasLoos/h-space-similarity-explorer">here</a>.
     </p>
     <p>
       Model:
       <select id="model-to-use">
+      </select>
+      Position: 
+      <select id="position-to-use">
       </select>
       Similarity measure:
       <select id="similarity-measure">
@@ -97,6 +101,8 @@ let last_tile = null;  // remember the last tile to avoid redundant updates
 let last_clicked = { concept_id: 0, col: 0, row: 0 };  // remember the last clicked tile
 const available_models = [];
 let current_model = null;
+let available_positions = {};
+let current_position = 'mid_block';  // assuming mid_block is always available
 const available_concepts = [];
 const concepts = [];
 const initial_concepts = [
@@ -152,7 +158,7 @@ function setupConcept({ index, initial_step }, i) {
   // helper function to load the representation
   const getRepr = () => {
     concept.repr = null;
-    fetch(`representations/${current_model.short}/${concept.name}/repr.bin`)
+    fetch(`representations/${current_model.short}/${concept.name}/repr-${current_position}.bin`)
       .then(response => response.arrayBuffer())
       .then(buffer => {
 
@@ -163,10 +169,9 @@ function setupConcept({ index, initial_step }, i) {
         concept.repr = repr;
 
         // calculate means
-        const m = current_model.hspace_channels;
-        const n = current_model.hspace_spatial;
-        const means = new Float32Array(m*current_model.steps);
-        for (let step = 0; step < current_model.steps; step++) {
+        const { steps, m, n } = current_model.get_shapes();
+        const means = new Float32Array(m*steps);
+        for (let step = 0; step < steps; step++) {
           for (let i = 0; i < m; i++) {
             const i_base = step*m + i;
             const i_repr = (step*m + i)*n*n;
@@ -232,10 +237,10 @@ function setupConcept({ index, initial_step }, i) {
       updateCanvases(concept, col, row);
 
       // log clicked tile
+      const { m, n } = current_model.get_shapes();
       const block_repr = [];
-      for (let i = 0; i < current_model.hspace_channels; i++) {
-        const offset = (concept.step-1)*current_model.hspace_channels*current_model.hspace_spatial*current_model.hspace_spatial + row*current_model.hspace_spatial + col;
-        block_repr.push(concept.repr[offset + i*current_model.hspace_spatial*current_model.hspace_spatial]);
+      for (let i = 0; i < m; i++) {
+        block_repr.push(concept.repr[(concept.step-1)*m*n*n + i*n*n + row*n + col]);
       }
       console.log(`Clicked on ${concept.name} at (${col},${row})`, block_repr);
     };
@@ -272,8 +277,7 @@ function setupConcept({ index, initial_step }, i) {
 function cosineSimilarity(repr1, offset1, repr2, offset2) {
 
   // init
-  const n = current_model.hspace_spatial;
-  const m = current_model.hspace_channels;
+  const { m, n } = current_model.get_shapes();
   let dotProduct = 0.0;
   let normA = 0.0;
   let normB = 0.0;
@@ -290,7 +294,9 @@ function cosineSimilarity(repr1, offset1, repr2, offset2) {
   normB = Math.sqrt(normB);
 
   if (normA === 0 || normB === 0) {
-    throw new Error('One of the vectors is zero');
+    console.error('One of the vectors is zero');
+    console.log('m:', m, 'n:', n, 'dotProduct:', dotProduct, 'normA:', normA, 'normB:', normB);
+    return NaN;
   }
 
   return dotProduct / (normA * normB);
@@ -303,8 +309,7 @@ function cosineSimilarity(repr1, offset1, repr2, offset2) {
 function softCosineSimilarity(repr1, offset1, repr2, offset2) {
 
   // init
-  const n = current_model.hspace_spatial;
-  const m = current_model.hspace_channels;
+  const { m, n } = current_model.get_shapes();
   let dotProduct = 0.0;
   let normA = 0.0;
   let normB = 0.0;
@@ -352,8 +357,7 @@ function softCosineSimilarity(repr1, offset1, repr2, offset2) {
 function centeredCosineSimilarity(repr1, offset1, means1, repr2, offset2, means2) {
 
   // init
-  const n = current_model.hspace_spatial;
-  const m = current_model.hspace_channels;
+  const { m, n } = current_model.get_shapes();
   let dotProduct = 0.0;
   let normA = 0.0;
   let normB = 0.0;
@@ -381,8 +385,7 @@ function centeredCosineSimilarity(repr1, offset1, means1, repr2, offset2, means2
 
 // calculate the euclidean distance (L1) between two representations
 function euclideanDistance(repr1, offset1, repr2, offset2) {
-  const n = current_model.hspace_spatial;
-  const m = current_model.hspace_channels;
+  const { m, n } = current_model.get_shapes();
   let sum = 0.0;
   for (let i = 0; i < m; i++) {
     const i1 = offset1 + i*n*n;
@@ -396,8 +399,7 @@ function euclideanDistance(repr1, offset1, repr2, offset2) {
 
 // calculate the manhattan distance (L2) between two representations
 function manhattanDistance(repr1, offset1, repr2, offset2) {
-  const n = current_model.hspace_spatial;
-  const m = current_model.hspace_channels;
+  const { m, n } = current_model.get_shapes();
   let sum = 0.0;
   for (let i = 0; i < m; i++) {
     const i1 = offset1 + i*n*n;
@@ -410,8 +412,7 @@ function manhattanDistance(repr1, offset1, repr2, offset2) {
 
 // calculate the chebyshev distance (L∞) between two representations
 function chebyshevDistance(repr1, offset1, repr2, offset2) {
-  const n = current_model.hspace_spatial;
-  const m = current_model.hspace_channels;
+  const { m, n } = current_model.get_shapes();
   let max = 0.0;
   for (let i = 0; i < m; i++) {
     const i1 = offset1 + i*n*n;
@@ -425,8 +426,7 @@ function chebyshevDistance(repr1, offset1, repr2, offset2) {
 
 // calculate similarities based on the selected similarity measure and tile
 function calcSimilarities(base_concept, col, row, concept) {
-  const n = current_model.hspace_spatial;
-  const m = current_model.hspace_channels;
+  const { m, n } = current_model.get_shapes();
   const step1 = base_concept.step - 1;
   const step2 = concept.step - 1;
 
@@ -476,19 +476,20 @@ function calcSimilarities(base_concept, col, row, concept) {
 
 // Function to draw the grid
 function drawGrid(ctx) {
-  const tile_size = ctx.canvas.width / current_model.hspace_spatial;
+  const { n } = current_model.get_shapes();
+  const tile_size = ctx.canvas.width / n;
   ctx.strokeStyle = 'black';
   ctx.lineWidth = 2;
   ctx.beginPath();
 
   // Draw the vertical lines
-  for (let i = 1; i < current_model.hspace_spatial; i++) {
+  for (let i = 1; i < n; i++) {
     ctx.moveTo(i * tile_size, 0);
     ctx.lineTo(i * tile_size, ctx.canvas.height);
   }
 
   // Draw the horizontal lines
-  for (let i = 1; i < current_model.hspace_spatial; i++) {
+  for (let i = 1; i < n; i++) {
     ctx.moveTo(0, i * tile_size);
     ctx.lineTo(ctx.canvas.width, i * tile_size);
   }
@@ -499,7 +500,7 @@ function drawGrid(ctx) {
 
 // Update the canvas highlightings based on the mouse position
 function updateCanvases(base_concept, col, row) {
-  const n = current_model.hspace_spatial;
+  const { n } = current_model.get_shapes();
   // Check if the mouse is inside the canvas
   if (col < 0 || col >= n || row < 0 || row >= n) return;
 
@@ -549,25 +550,38 @@ function updateCanvases(base_concept, col, row) {
 
 // force update of all canvases with the last clicked tile as the base
 function updateCanvasesWithLastClicked() {
+  console.log('updateCanvasesWithLastClicked')
   last_tile = null;  // force update
   updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
 }
 
 
 
-function updateModelDescription(model) {
-  document.getElementById('model-description').textContent = `The examples below are for ${model.name}, which has a h-space dimension of (${model.steps},${model.hspace_channels},${model.hspace_spatial},${model.hspace_spatial}), i.e. ${model.steps} steps, ${model.hspace_channels} channels, and ${model.hspace_spatial}x${model.hspace_spatial} spatial resolution.`;
+function updatePositionSelector() {
+  if (current_model.representations[current_position] === undefined) current_position = 'mid_block';  // fallback to mid_block, if current position is not available
+    document.getElementById('position-to-use').innerHTML = '';  // clear options
+    Object.keys(current_model.representations).forEach(position => {
+      // setup available positions (where the representations are extracted from)
+      createElem('option', { value: position, textContent: position == 'mid_block' ? 'mid_block (h-space)' : position, selected: position == current_position }, document.getElementById('position-to-use'));
+    });
+}
+
+
+function updateModelDescription() {
+  const { steps, m, n} = current_model.get_shapes();
+  document.getElementById('model-description').textContent = `The examples below are the output for ${current_model.name} at position ${current_position} in the diffusion unet, which has a dimension of (${steps},${m},${n},${n}), i.e. ${steps} steps, ${m} channels, and ${n}x${n} spatial resolution.`;
 };
 
 
 // get mouse/touch position on canvas
 function getMousePos(canvas, event) {
+  const { n } = current_model.get_shapes();
   if (event.touches) event = event.touches[0];  // handle touch events for mobile
   const rect = canvas.getBoundingClientRect();
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
-  const col = Math.floor(2 * x / canvas.width * current_model.hspace_spatial);
-  const row = Math.floor(2 * y / canvas.width * current_model.hspace_spatial);
+  const col = Math.floor(2 * x / canvas.width * n);
+  const row = Math.floor(2 * y / canvas.width * n);
   return { col, row };
 }
 
@@ -590,9 +604,11 @@ function init() {
       available_models.push(...data);
       available_models.forEach(model => {
         createElem('option', { value: model.short, textContent: model.short }, document.getElementById('model-to-use'));
+        model.get_shapes = () => ({ steps: model.steps, m: model.representations[current_position].channels, n: model.representations[current_position].spatial })
       });
       current_model = available_models[0];
-      updateModelDescription(current_model);
+      updatePositionSelector();
+      updateModelDescription();
     })
     .catch(error => console.error('Error while fetching models info:', error));
   
@@ -618,10 +634,11 @@ function init() {
   document.getElementById('model-to-use').addEventListener('change', event => {
     const prev_hspace_spatial = current_model.hspace_spatial;
 
-    // update current model and description
+    // update current model, position selector, and description
     const model = available_models.find(x => x.short === event.target.value);
     current_model = model;
-    updateModelDescription(model);
+    updatePositionSelector();
+    updateModelDescription();
 
     // update last clicked if spatial resolution changed
     if (current_model.hspace_spatial !== prev_hspace_spatial) {
@@ -630,6 +647,14 @@ function init() {
     }
 
     // update concepts and canvases
+    concepts.forEach(concept => concept.update());
+    updateCanvasesWithLastClicked();
+  });
+
+  // setup position change event listener
+  document.getElementById('position-to-use').addEventListener('change', event => {
+    current_position = event.target.value;
+    updateModelDescription();
     concepts.forEach(concept => concept.update());
     updateCanvasesWithLastClicked();
   });
