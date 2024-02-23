@@ -106,9 +106,9 @@ let current_position = 'mid_block';  // assuming mid_block is always available
 const available_concepts = [];
 const concepts = [];
 const initial_concepts = [
-  { index: 0, initial_step: 50, },
-  { index: 1, initial_step: 50, },
-  { index: 1, initial_step: 32, },
+  { index: 0, initial_step: 4, },
+  { index: 1, initial_step: 4, },
+  { index: 1, initial_step: 2, },
 ];
 
 
@@ -142,7 +142,7 @@ function setupConcept({ index, initial_step }, i) {
   const canvas_size = image_canvas_div.clientWidth * 2;
   const title_p = createElem('p', {}, image_canvas_div);
   createElem('span', { textContent: `Image at step:` }, title_p);
-  const slider = createElem('input', { type: 'range', min: '1', max: '50', value: concept.step }, title_p);
+  const slider = createElem('input', { type: 'range', min: '1', max: current_model.steps, value: concept.step }, title_p);
   const slider_value = createElem('span', { textContent: concept.step }, title_p);
   concept.image_canvas = createElem('canvas', { width: canvas_size, height: canvas_size }, image_canvas_div);
   const tile_canvas_div = createElem('div', {}, canvas_row);
@@ -169,7 +169,7 @@ function setupConcept({ index, initial_step }, i) {
         concept.repr = repr;
 
         // calculate means
-        const { steps, m, n } = current_model.get_shapes();
+        const { steps, m, n } = current_model.getShapes();
         const means = new Float32Array(m*steps);
         for (let step = 0; step < steps; step++) {
           for (let i = 0; i < m; i++) {
@@ -237,7 +237,7 @@ function setupConcept({ index, initial_step }, i) {
       updateCanvases(concept, col, row);
 
       // log clicked tile
-      const { m, n } = current_model.get_shapes();
+      const { m, n } = current_model.getShapes();
       const block_repr = [];
       for (let i = 0; i < m; i++) {
         block_repr.push(concept.repr[(concept.step-1)*m*n*n + i*n*n + row*n + col]);
@@ -277,7 +277,7 @@ function setupConcept({ index, initial_step }, i) {
 function cosineSimilarity(repr1, offset1, repr2, offset2) {
 
   // init
-  const { m, n } = current_model.get_shapes();
+  const { m, n } = current_model.getShapes();
   let dotProduct = 0.0;
   let normA = 0.0;
   let normB = 0.0;
@@ -309,7 +309,7 @@ function cosineSimilarity(repr1, offset1, repr2, offset2) {
 function softCosineSimilarity(repr1, offset1, repr2, offset2) {
 
   // init
-  const { m, n } = current_model.get_shapes();
+  const { m, n } = current_model.getShapes();
   let dotProduct = 0.0;
   let normA = 0.0;
   let normB = 0.0;
@@ -357,7 +357,7 @@ function softCosineSimilarity(repr1, offset1, repr2, offset2) {
 function centeredCosineSimilarity(repr1, offset1, means1, repr2, offset2, means2) {
 
   // init
-  const { m, n } = current_model.get_shapes();
+  const { m, n } = current_model.getShapes();
   let dotProduct = 0.0;
   let normA = 0.0;
   let normB = 0.0;
@@ -385,7 +385,7 @@ function centeredCosineSimilarity(repr1, offset1, means1, repr2, offset2, means2
 
 // calculate the euclidean distance (L1) between two representations
 function euclideanDistance(repr1, offset1, repr2, offset2) {
-  const { m, n } = current_model.get_shapes();
+  const { m, n } = current_model.getShapes();
   let sum = 0.0;
   for (let i = 0; i < m; i++) {
     const i1 = offset1 + i*n*n;
@@ -399,7 +399,7 @@ function euclideanDistance(repr1, offset1, repr2, offset2) {
 
 // calculate the manhattan distance (L2) between two representations
 function manhattanDistance(repr1, offset1, repr2, offset2) {
-  const { m, n } = current_model.get_shapes();
+  const { m, n } = current_model.getShapes();
   let sum = 0.0;
   for (let i = 0; i < m; i++) {
     const i1 = offset1 + i*n*n;
@@ -412,7 +412,7 @@ function manhattanDistance(repr1, offset1, repr2, offset2) {
 
 // calculate the chebyshev distance (L∞) between two representations
 function chebyshevDistance(repr1, offset1, repr2, offset2) {
-  const { m, n } = current_model.get_shapes();
+  const { m, n } = current_model.getShapes();
   let max = 0.0;
   for (let i = 0; i < m; i++) {
     const i1 = offset1 + i*n*n;
@@ -426,7 +426,7 @@ function chebyshevDistance(repr1, offset1, repr2, offset2) {
 
 // calculate similarities based on the selected similarity measure and tile
 function calcSimilarities(base_concept, col, row, concept) {
-  const { m, n } = current_model.get_shapes();
+  const { m, n } = current_model.getShapes();
   const step1 = base_concept.step - 1;
   const step2 = concept.step - 1;
 
@@ -476,7 +476,7 @@ function calcSimilarities(base_concept, col, row, concept) {
 
 // Function to draw the grid
 function drawGrid(ctx) {
-  const { n } = current_model.get_shapes();
+  const { n } = current_model.getShapes();
   const tile_size = ctx.canvas.width / n;
   ctx.strokeStyle = 'black';
   ctx.lineWidth = 2;
@@ -500,7 +500,7 @@ function drawGrid(ctx) {
 
 // Update the canvas highlightings based on the mouse position
 function updateCanvases(base_concept, col, row) {
-  const { n } = current_model.get_shapes();
+  const { n } = current_model.getShapes();
   // Check if the mouse is inside the canvas
   if (col < 0 || col >= n || row < 0 || row >= n) return;
 
@@ -515,6 +515,7 @@ function updateCanvases(base_concept, col, row) {
     // update image canvas
     const img_ctx = concept.image_ctx;
     img_ctx.clearRect(0, 0, img_ctx.canvas.width, img_ctx.canvas.height);
+    console.log('img', concept.img)
     img_ctx.drawImage(concept.img, 0, 0, img_ctx.canvas.width, img_ctx.canvas.height);
     drawGrid(img_ctx);
     if (concept === base_concept) {
@@ -568,14 +569,14 @@ function updatePositionSelector() {
 
 
 function updateModelDescription() {
-  const { steps, m, n} = current_model.get_shapes();
+  const { steps, m, n} = current_model.getShapes();
   document.getElementById('model-description').textContent = `The examples below are the output for ${current_model.name} at position ${current_position} in the diffusion unet, which has a dimension of (${steps},${m},${n},${n}), i.e. ${steps} steps, ${m} channels, and ${n}x${n} spatial resolution.`;
 };
 
 
 // get mouse/touch position on canvas
 function getMousePos(canvas, event) {
-  const { n } = current_model.get_shapes();
+  const { n } = current_model.getShapes();
   if (event.touches) event = event.touches[0];  // handle touch events for mobile
   const rect = canvas.getBoundingClientRect();
   const x = event.clientX - rect.left;
@@ -604,7 +605,7 @@ function init() {
       available_models.push(...data);
       available_models.forEach(model => {
         createElem('option', { value: model.short, textContent: model.short }, document.getElementById('model-to-use'));
-        model.get_shapes = () => ({ steps: model.steps, m: model.representations[current_position].channels, n: model.representations[current_position].spatial })
+        model.getShapes = () => ({ steps: model.steps, m: model.representations[current_position].channels, n: model.representations[current_position].spatial })
       });
       current_model = available_models[0];
       updatePositionSelector();
