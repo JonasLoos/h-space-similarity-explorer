@@ -444,7 +444,7 @@ function calcSimilarities(base_concept, col, row, concept) {
 
   // check if representations are loaded
   if (!base_concept.repr || !concept.repr) {
-    console.log(`Representations not loaded (base_concept: ${!!base_concept.repr}, other concept: ${!!concept.repr})`);
+    console.warn(`Representations not loaded (base_concept: ${!!base_concept.repr}, other concept: ${!!concept.repr})`);
     return Array(n*n).fill(0);
   }
 
