@@ -189,7 +189,7 @@ function setupConcept({ index, initial_step }, i) {
         for (let step = 0; step < steps; step++) {
           for (let i = 0; i < n*n; i++) {
             for (let j = 0; j < m; j++) {
-              means[step*m + j] += repr[step*m*n*n + i*n + j] / (n*n);
+              means[step*m + j] += repr[step*n*n*m + i*m + j] / (n*n);
             }
           }
         }
@@ -379,7 +379,6 @@ function centeredCosineSimilarity(repr1, offset1, means1, repr2, offset2, means2
     const i1 = offset1 + i;
     const i2 = offset2 + i;
     const mean = (means1[i] + means2[i]) / 2;  // use the mean over both representations
-    if (i == 0) console.log('mean:', mean);
     dotProduct += (repr1[i1] - mean) * (repr2[i2] - mean);
     normA += Math.pow(repr1[i1] - mean, 2);
     normB += Math.pow(repr2[i2] - mean, 2);
@@ -563,7 +562,6 @@ function updateCanvases(base_concept, col, row) {
 
 // force update of all canvases with the last clicked tile as the base
 function updateCanvasesWithLastClicked() {
-  console.log('updateCanvasesWithLastClicked')
   last_tile = null;  // force update
   updateCanvases(concepts[last_clicked.concept_id], last_clicked.col, last_clicked.row);
 }
