@@ -141,7 +141,7 @@ function createElem(tag, attrs, parent) {
 // setup a concept with its canvas elements and event listeners
 function setupConcept({ index, initial_step }, i) {
   const { name, prompt } = available_concepts[index];
-  const concept = { id: i, name: name, step: initial_step };
+  const concept = { id: i, name: name, step: initial_step, repr_loading_started: null };
   // create html elements
   const canvas_container = document.getElementById('canvas-container');
   const title_elem = createElem('h2', {}, canvas_container)
@@ -173,9 +173,20 @@ function setupConcept({ index, initial_step }, i) {
   // helper function to load the representation
   const getRepr = () => {
     concept.repr = null;
+    concept.repr_means = null;
+    concept.repr_loading_started = Date.now();
+    // backup current model name and position, as they might change during the fetch
+    const current_model_name_backup = current_model.name;
+    const current_position_backup = current_position;
     fetch(`representations/${current_model.short}/${concept.name}/repr-${current_position}.bin`)
       .then(response => response.arrayBuffer())
       .then(buffer => {
+
+        // check if the model or position changed during the fetch
+        if (current_model_name_backup !== current_model.name || current_position_backup !== current_position) {
+          console.log(`Fetched repr for ${concept.name} with length ${buffer.byteLength} after model or position changed. Ignoring.`);
+          return;
+        }
 
         // store representation
         const repr = new Float32Array(buffer);
@@ -196,6 +207,10 @@ function setupConcept({ index, initial_step }, i) {
         concept.repr_means = means;
         // update convases as the representations are available now
         updateCanvasesWithLastClicked();
+      })
+      .catch(error => {
+        console.error(`Error while fetching repr for ${concept.name}:`, error);
+        self.repr_loading_started = null;
       });
   };
 
@@ -213,12 +228,14 @@ function setupConcept({ index, initial_step }, i) {
     slider_value.textContent = concept.step;
 
     // update image und representation
+    concept.img.src = '';
     concept.img.src = `representations/${current_model.short}/${concept.name}/${concept.step}.jpg`;
+    updateCanvasesWithLastClicked();
     getRepr();
   }
 
   // load image
-  concept.img = new Image();  
+  concept.img = new Image();
   concept.img.src = `representations/${current_model.short}/${concept.name}/${concept.step}.jpg`;
   concept.img.onload = function() {
     concept.image_ctx.globalCompositeOperation = 'destination-over';
@@ -248,6 +265,7 @@ function setupConcept({ index, initial_step }, i) {
       updateCanvases(concept, col, row);
 
       // log clicked tile
+      if (!concept.repr) return;
       const { m, n } = current_model.getShapes();
       const block_repr = [];
       const offset = (concept.step-1)*m*n*n + row*n*m + col*m;
@@ -443,10 +461,7 @@ function calcSimilarities(base_concept, col, row, concept) {
   const step2 = concept.step - 1;
 
   // check if representations are loaded
-  if (!base_concept.repr || !concept.repr) {
-    console.warn(`Representations not loaded (base_concept: ${!!base_concept.repr}, other concept: ${!!concept.repr})`);
-    return Array(n*n).fill(0);
-  }
+  if (!base_concept.repr || !concept.repr) return undefined;
 
   // helper function to calculate similarities for all tiles
   const calc = measure => {
@@ -527,7 +542,11 @@ function updateCanvases(base_concept, col, row) {
     // update image canvas
     const img_ctx = concept.image_ctx;
     img_ctx.clearRect(0, 0, img_ctx.canvas.width, img_ctx.canvas.height);
-    img_ctx.drawImage(concept.img, 0, 0, img_ctx.canvas.width, img_ctx.canvas.height);
+    try {
+      img_ctx.drawImage(concept.img, 0, 0, img_ctx.canvas.width, img_ctx.canvas.height);      
+    } catch (error) {
+      console.warn('Error while drawing image');
+    }
     drawGrid(img_ctx);
     if (concept === base_concept) {
       // highlight the currently selected tile
@@ -545,17 +564,39 @@ function updateCanvases(base_concept, col, row) {
     // update tile canvas
     const similarities = calcSimilarities(base_concept, col, row, concept);
     concept.tile_ctx.clearRect(0, 0, concept.tile_ctx.canvas.width, concept.tile_ctx.canvas.height);
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        const similarity = similarities[i * n + j];
-        concept.tile_ctx.fillStyle = similarity > 0 ? `rgba(255, 165, 0, ${similarity})` : `rgba(0, 165, 255, ${-similarity})`;
-        concept.tile_ctx.fillRect(i * tile_size, j * tile_size, tile_size, tile_size);
+    if (similarities) {
+      // draw the similarities
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          const similarity = similarities[i * n + j];
+          concept.tile_ctx.fillStyle = similarity > 0 ? `rgba(255, 165, 0, ${similarity})` : `rgba(0, 165, 255, ${-similarity})`;
+          concept.tile_ctx.fillRect(i * tile_size, j * tile_size, tile_size, tile_size);
+        }
       }
+      // calculate and update average similarity
+      const averageSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length;
+      concept.text.textContent = `${averageSimilarity.toFixed(4)}`;
+    } else {
+      concept.tile_ctx.fillStyle = 'black';
+      concept.tile_ctx.font = '30px Arial';
+      concept.tile_ctx.textAlign = 'center';
+      concept.tile_ctx.textBaseline = 'middle';
+      const loading_dots_count = Math.floor((Date.now() % 1000) / 250);
+      const loading_dots = '.'.repeat(loading_dots_count) + ' '.repeat(3 - loading_dots_count);
+      if (concept.repr) {
+        // this concept is ready, so some other concept is at fault
+        concept.tile_ctx.fillText('Waiting for other representation'+loading_dots, concept.tile_ctx.canvas.width / 2, concept.tile_ctx.canvas.height / 2);
+      } else if (concept.repr_loading_started === null) {
+        // repr_loading_started is null if the request failed
+        concept.tile_ctx.fillText('Failed to load model.', concept.tile_ctx.canvas.width / 2, concept.tile_ctx.canvas.height / 2);
+        concept.tile_ctx.fillText('Change settings to try again.', concept.tile_ctx.canvas.width / 2, concept.tile_ctx.canvas.height / 2 + 40);
+      } else if (concept.repr_loading_started + 500 < Date.now()) {
+        // display loading text after 500ms
+        concept.tile_ctx.fillText('Loading'+loading_dots, concept.tile_ctx.canvas.width / 2, concept.tile_ctx.canvas.height / 2);
+      }
+      concept.text.textContent = `?`;
+      updateCanvasesSoon(base_concept, col, row);  // schedule update to check if representations are loaded and animate loading text
     }
-
-    // calculate and update average similarity
-    const averageSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length;
-    concept.text.textContent = `${averageSimilarity.toFixed(4)}`;
   }
 }
 
@@ -567,14 +608,32 @@ function updateCanvasesWithLastClicked() {
 }
 
 
+// delayed canvas update
+function updateCanvasesSoon(concept, col, row) {
+  // force update
+  last_tile = null;
+  // update now if the last update was more than 100ms ago, to ensure updates even when this function is called often
+  if (self.timer && self.last_updated && self.last_updated + 100 < Date.now()) {
+    self.last_updated = Date.now();
+    updateCanvases(concept, col, row);
+  }
+  // scehdule update in 100ms
+  clearTimeout(self.timer);
+  self.timer = setTimeout(() => {
+    self.last_updated = Date.now();
+    updateCanvases(concept, col, row);
+  }, 100);
+}
+
+
 
 function updatePositionSelector() {
   if (current_model.representations[current_position] === undefined) current_position = 'mid_block';  // fallback to mid_block, if current position is not available
-    document.getElementById('position-to-use').innerHTML = '';  // clear options
-    Object.keys(current_model.representations).forEach(position => {
-      // setup available positions (where the representations are extracted from)
-      createElem('option', { value: position, textContent: position == 'mid_block' ? 'mid_block (h-space)' : position, selected: position == current_position }, document.getElementById('position-to-use'));
-    });
+  document.getElementById('position-to-use').innerHTML = '';  // clear old options
+  Object.keys(current_model.representations).forEach(position => {
+    // setup available positions (where the representations are extracted from)
+    createElem('option', { value: position, textContent: position == 'mid_block' ? 'mid_block (h-space)' : position, selected: position == current_position }, document.getElementById('position-to-use'));
+  });
 }
 
 
