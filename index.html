@@ -118,6 +118,7 @@ const available_models = [];
 let current_model = null;
 let available_positions = {};
 let current_position = 'mid_block';  // assuming mid_block is always available
+const repr_cache = {};
 const available_concepts = [];
 const concepts = [];
 const initial_concepts = [
@@ -172,13 +173,20 @@ function setupConcept({ index, initial_step }, i) {
 
   // helper function to load the representation
   const getRepr = () => {
+    const url = `representations/${current_model.short}/${concept.name}/repr-${current_position}.bin`;
+    if (repr_cache[url]) {
+      concept.repr = repr_cache[url];
+      concept.repr_means = repr_cache[url+'_means'];
+      updateCanvasesWithLastClicked();
+      return;
+    }
     concept.repr = null;
     concept.repr_means = null;
     concept.repr_loading_started = Date.now();
     // backup current model name and position, as they might change during the fetch
     const current_model_name_backup = current_model.name;
     const current_position_backup = current_position;
-    fetch(`representations/${current_model.short}/${concept.name}/repr-${current_position}.bin`)
+    fetch(url)
       .then(response => response.arrayBuffer())
       .then(buffer => {
 
@@ -205,6 +213,8 @@ function setupConcept({ index, initial_step }, i) {
           }
         }
         concept.repr_means = means;
+        repr_cache[url] = repr;
+        repr_cache[url+'_means'] = means;
         // update convases as the representations are available now
         updateCanvasesWithLastClicked();
       })
