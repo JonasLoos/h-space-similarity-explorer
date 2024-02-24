@@ -573,36 +573,39 @@ function updateCanvases(base_concept, col, row) {
     }
     // update tile canvas
     const similarities = calcSimilarities(base_concept, col, row, concept);
-    concept.tile_ctx.clearRect(0, 0, concept.tile_ctx.canvas.width, concept.tile_ctx.canvas.height);
+    const tile_ctx = concept.tile_ctx;
+    const { width, height } = tile_ctx.canvas;
+    tile_ctx.clearRect(0, 0, width, height);
     if (similarities) {
       // draw the similarities
       for (let i = 0; i < n; i++) {
         for (let j = 0; j < n; j++) {
           const similarity = similarities[i * n + j];
-          concept.tile_ctx.fillStyle = similarity > 0 ? `rgba(255, 165, 0, ${similarity})` : `rgba(0, 165, 255, ${-similarity})`;
-          concept.tile_ctx.fillRect(i * tile_size, j * tile_size, tile_size, tile_size);
+          // draw orange for positive similarity and blue for negative similarity
+          tile_ctx.fillStyle = similarity > 0 ? `rgba(255, 165, 0, ${similarity})` : `rgba(0, 165, 255, ${-similarity})`;
+          tile_ctx.fillRect(i * tile_size, j * tile_size, tile_size, tile_size);
         }
       }
       // calculate and update average similarity
       const averageSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length;
       concept.text.textContent = `${averageSimilarity.toFixed(4)}`;
     } else {
-      concept.tile_ctx.fillStyle = 'black';
-      concept.tile_ctx.font = '30px Arial';
-      concept.tile_ctx.textAlign = 'center';
-      concept.tile_ctx.textBaseline = 'middle';
+      tile_ctx.fillStyle = 'black';
+      tile_ctx.font = '30px Arial';
+      tile_ctx.textAlign = 'center';
+      tile_ctx.textBaseline = 'middle';
       const loading_dots_count = Math.floor((Date.now() % 1000) / 250);
       const loading_dots = '.'.repeat(loading_dots_count) + ' '.repeat(3 - loading_dots_count);
       if (concept.repr) {
         // this concept is ready, so some other concept is at fault
-        concept.tile_ctx.fillText('Waiting for other representation'+loading_dots, concept.tile_ctx.canvas.width / 2, concept.tile_ctx.canvas.height / 2);
+        tile_ctx.fillText('Waiting for other representation'+loading_dots, width / 2, height / 2);
       } else if (concept.repr_loading_started === null) {
         // repr_loading_started is null if the request failed
-        concept.tile_ctx.fillText('Failed to load model.', concept.tile_ctx.canvas.width / 2, concept.tile_ctx.canvas.height / 2);
-        concept.tile_ctx.fillText('Change settings to try again.', concept.tile_ctx.canvas.width / 2, concept.tile_ctx.canvas.height / 2 + 40);
+        tile_ctx.fillText('Failed to load model.', width / 2, height / 2);
+        tile_ctx.fillText('Change settings to try again.', width / 2, height / 2 + 40);
       } else if (concept.repr_loading_started + 500 < Date.now()) {
         // display loading text after 500ms
-        concept.tile_ctx.fillText('Loading'+loading_dots, concept.tile_ctx.canvas.width / 2, concept.tile_ctx.canvas.height / 2);
+        tile_ctx.fillText('Loading'+loading_dots, width / 2, height / 2);
       }
       concept.text.textContent = `?`;
       updateCanvasesSoon(base_concept, col, row);  // schedule update to check if representations are loaded and animate loading text
