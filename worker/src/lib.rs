@@ -11,10 +11,10 @@ use ndarray::{s, Array1, ArrayView4};
 
 
 thread_local! {
-    static GLOBAL_MAP: RefCell<HashMap<String, Vec<f16>>> = RefCell::new(HashMap::new());
+    static GLOBAL_MAP: RefCell<HashMap<String, Vec<f32>>> = RefCell::new(HashMap::new());
 }
 
-fn get_repr(url: &str) -> Option<Array1<f16>> {
+fn get_repr(url: &str) -> Option<Array1<f32>> {
     GLOBAL_MAP.with(|map| {
         map.borrow().get(url).map(|vec| Array1::from(vec.clone()))
     })
@@ -39,8 +39,8 @@ pub fn calc_similarities(
     let repr2 = get_repr(&repr2_str).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation 2, url: {}", repr2_str)))?;
     let time_repr = js_sys::Date::now();
 
-    let repr1_2d: ArrayView4<f16> = ArrayView4::from_shape((4, n, n, m), repr1.as_slice().unwrap()).unwrap();
-    let repr2_2d: ArrayView4<f16> = ArrayView4::from_shape((4, n, n, m), repr2.as_slice().unwrap()).unwrap();
+    let repr1_2d: ArrayView4<f32> = ArrayView4::from_shape((4, n, n, m), repr1.as_slice().unwrap()).unwrap();
+    let repr2_2d: ArrayView4<f32> = ArrayView4::from_shape((4, n, n, m), repr2.as_slice().unwrap()).unwrap();
     let time_reshape = js_sys::Date::now();
 
     let base_slice = repr1_2d.slice(s![step1,row,col,..]).map(|&x| f32::from(x));
@@ -132,7 +132,7 @@ pub async fn fetch_repr(url: String) -> Result<(), JsValue> {
     let float16_data: Vec<f16> = bytes.chunks(4).map(|chunk| f16::from_f32(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))).collect();
 
     GLOBAL_MAP.with(|map| {
-        map.borrow_mut().insert(url, float16_data);
+        map.borrow_mut().insert(url, float16_data.iter().map(|&x| f32::from(x)).collect());
     });
 
     // log currently available representations
