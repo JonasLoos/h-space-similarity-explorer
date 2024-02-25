@@ -7,16 +7,33 @@ use std::cell::RefCell;
 use js_sys::{ArrayBuffer, Uint8Array};
 use console_error_panic_hook;
 use std::panic;
-use ndarray::{s, Array1, ArrayView4};
+use ndarray::{s, Array1, ArrayView1, ArrayView4};
+use std::sync::Arc;
 
 
 thread_local! {
-    static GLOBAL_MAP: RefCell<HashMap<String, Vec<f32>>> = RefCell::new(HashMap::new());
+    static GLOBAL_MAP: RefCell<HashMap<String, Arc<Vec<f32>>>> = RefCell::new(HashMap::new());
 }
 
-fn get_repr(url: &str) -> Option<Array1<f32>> {
+// Adjusted to insert data into the map
+fn insert_repr(url: &str, data: Vec<f32>) {
     GLOBAL_MAP.with(|map| {
-        map.borrow().get(url).map(|vec| Array1::from(vec.clone()))
+        map.borrow_mut().insert(url.to_string(), Arc::new(data));
+    });
+}
+
+// Adjusted to return an ArrayView1 with a 'static lifetime
+fn get_repr(url: &str) -> Option<ArrayView1<'static, f32>> {
+    GLOBAL_MAP.with(|map| {
+        map.borrow().get(url).map(|arc_vec| {
+            // SAFETY: This is safe because the data in Arc<Vec<f32>> is guaranteed to live for the 'static lifetime.
+            // We are essentially extending the lifetime of the reference to 'static, which is valid because
+            // the data is owned by an Arc, ensuring it lives as long as necessary.
+            let static_slice: &'static [f32] = unsafe {
+                std::mem::transmute(&arc_vec[..])
+            };
+            ArrayView1::from(static_slice)
+        })
     })
 }
 
@@ -131,13 +148,8 @@ pub async fn fetch_repr(url: String) -> Result<(), JsValue> {
     let bytes = Uint8Array::new(&buffer).to_vec();
     let float16_data: Vec<f16> = bytes.chunks(4).map(|chunk| f16::from_f32(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))).collect();
 
-    GLOBAL_MAP.with(|map| {
-        map.borrow_mut().insert(url, float16_data.iter().map(|&x| f32::from(x)).collect());
-    });
-
-    // log currently available representations
-    // let reprs: Vec<String> = GLOBAL_MAP.with(|map| map.borrow().keys().cloned().collect());
-    // console::log_1(&JsValue::from_str(&format!("Currently available representations: {:?}", reprs)));
+    let float32_data_rc = float16_data.iter().map(|&x| f32::from(x)).collect::<Vec<f32>>();
+    insert_repr(&url, float32_data_rc);
 
     Ok(())
 }
