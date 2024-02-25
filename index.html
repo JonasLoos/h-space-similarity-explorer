@@ -126,18 +126,21 @@ const initial_concepts = [
   { index: 1, initial_step: 4, },
   { index: 1, initial_step: 2, },
 ];
+let render_counter = 0;
 
 
 // setup webworker for similarity computations
 const worker = new Worker('worker/webworker.js', { type: 'module' });
 worker.promise = new Promise((resolve, reject) => {resolve()});
-worker.count = 0;
 
 // send a task to the webworker and return a promise
 function useWasm(task, data) {
   // wait for the previous task to finish
+  const render_counter_backup = render_counter;
   const promise = worker.promise.then(() => {
-    const id = worker.count++;
+    if (task == 'calc_similarities' && render_counter_backup !== render_counter) {
+      return { similarities: 'outdated' };
+    }
     const promise = new Promise((resolve, reject) => {
       worker.onmessage = (e) => {resolve(e.data)};
       worker.onerror = reject;
@@ -603,8 +606,8 @@ function drawError(concept, loading) {
     tile_ctx.fillText('Loading'+loading_dots, width / 2, height / 2);
   } else {
     // repr_loading_started is null if the request failed
-    tile_ctx.fillText('Failed to load model.', width / 2, height / 2);
-    tile_ctx.fillText('Change settings to try again.', width / 2, height / 2 + 40);
+    tile_ctx.fillText('Error.', width / 2, height / 2);
+    tile_ctx.fillText('Try to change settings', width / 2, height / 2 + 40);
   }
   concept.text.textContent = `?`;
 }
@@ -620,6 +623,7 @@ function updateCanvases(base_concept, col, row) {
   const curr_tile = `${base_concept.id}-${col}-${row}`;
   if (curr_tile === last_tile) return;
   last_tile = curr_tile;
+  render_counter++;
 
   // Update the canvases
   const func = document.getElementById('similarity-measure').value;
@@ -650,12 +654,15 @@ function updateCanvases(base_concept, col, row) {
     // update tile canvas
     useWasm('calc_similarities', { func, repr1_str: base_concept.getUrl(), repr2_str: concept.getUrl(), step1: base_concept.step-1, step2: concept.step-1, row, col, n, m })
       .then(({similarities}) => {
-        if (similarities === null) {
+        if (similarities === 'loading') {
           drawError(concept, true);
           updateCanvasesSoon(base_concept, col, row);  // schedule update to check if representations are loaded and animate loading text
           return;
+        } else if (similarities === 'outdated') {
+          return;
+        } else {
+          drawSimilarities(concept, similarities);
         }
-        drawSimilarities(concept, similarities);
       })
       .catch((error) => {
         // console.error('Error while calculating similarities:', error);

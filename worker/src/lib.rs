@@ -1,6 +1,5 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use std::f64;
 use std::collections::HashMap;
 use half::f16;
 use web_sys::{js_sys, Request, RequestInit, RequestMode, Response, console};
@@ -8,103 +7,95 @@ use std::cell::RefCell;
 use js_sys::{ArrayBuffer, Uint8Array};
 use console_error_panic_hook;
 use std::panic;
+use ndarray::{s, Array1, ArrayView4};
 
 
 thread_local! {
     static GLOBAL_MAP: RefCell<HashMap<String, Vec<f16>>> = RefCell::new(HashMap::new());
 }
 
-// Calculate the cosine similarity between two vectors
-fn cosine_similarity(repr1: &[f64], repr2: &[f64]) -> f64 {
-    let dot_product: f64 = repr1.iter().zip(repr2.iter()).map(|(a, b)| a * b).sum();
-    let norm_a: f64 = repr1.iter().map(|a| a.powi(2)).sum::<f64>().sqrt();
-    let norm_b: f64 = repr2.iter().map(|b| b.powi(2)).sum::<f64>().sqrt();
-
-    if norm_a == 0.0 || norm_b == 0.0 {
-        panic!("One of the vectors is zero");
-    }
-
-    dot_product / (norm_a * norm_b)
-}
-
-// Calculate the centered cosine similarity between two vectors
-fn centered_cosine_similarity(repr1: &[f64], means1: &[f64], repr2: &[f64], means2: &[f64]) -> f64 {
-    let mean: Vec<f64> = means1.iter().zip(means2.iter()).map(|(a, b)| (a + b) / 2.0).collect();
-    let adjusted_repr1: Vec<f64> = repr1.iter().zip(mean.iter()).map(|(r, m)| r - m).collect();
-    let adjusted_repr2: Vec<f64> = repr2.iter().zip(mean.iter()).map(|(r, m)| r - m).collect();
-
-    cosine_similarity(&adjusted_repr1, &adjusted_repr2)
-}
-
-// Calculate the Euclidean distance between two vectors
-fn euclidean_distance(repr1: &[f64], repr2: &[f64]) -> f64 {
-    repr1.iter().zip(repr2.iter()).map(|(a, b)| (a - b).powi(2)).sum::<f64>().sqrt()
-}
-
-// Calculate the Manhattan distance between two vectors
-fn manhattan_distance(repr1: &[f64], repr2: &[f64]) -> f64 {
-    repr1.iter().zip(repr2.iter()).map(|(a, b)| (a - b).abs()).sum()
-}
-
-// Calculate the Chebyshev distance between two vectors
-fn chebyshev_distance(repr1: &[f64], repr2: &[f64]) -> f64 {
-    repr1.iter().zip(repr2.iter()).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max)
-}
-
-
-fn get_repr(url: String) -> Option<Vec<f64>> {
+fn get_repr(url: &str) -> Option<Array1<f16>> {
     GLOBAL_MAP.with(|map| {
-        map.borrow().get(&url).map(|vec| vec.iter().map(|&num| num.to_f64()).collect())
+        map.borrow().get(url).map(|vec| Array1::from(vec.clone()))
     })
 }
 
-
-
 #[wasm_bindgen]
-pub fn calc_similarities(func: String, repr1_str: String, repr2_str: String, step1: usize, step2: usize, row: usize, col: usize, n: usize, m: usize) -> Result<Vec<f64>, JsValue> {
-    console_error_panic_hook::set_once();  // better error messages in the console
+pub fn calc_similarities(
+    func: String, 
+    repr1_str: String, 
+    repr2_str: String, 
+    step1: usize, 
+    step2: usize, 
+    row: usize, 
+    col: usize, 
+    n: usize, 
+    m: usize
+) -> Result<Vec<f32>, JsValue> {
+    console_error_panic_hook::set_once();
+    let time_start = js_sys::Date::now();
 
-    let repr1: Vec<f64> = match get_repr(repr1_str.clone()) {
-        Some(repr) => repr,
-        None => return Err(JsValue::from_str(&format!("Failed to get representation 1, url: {}", repr1_str))),
-    };
-    let repr2: Vec<f64> = match get_repr(repr2_str.clone()) {
-        Some(repr) => repr,
-        None => return Err(JsValue::from_str(&format!("Failed to get representation 2, url: {}", repr2_str))),
-    };
+    let repr1 = get_repr(&repr1_str).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation 1, url: {}", repr1_str)))?;
+    let repr2 = get_repr(&repr2_str).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation 2, url: {}", repr2_str)))?;
+    let time_repr = js_sys::Date::now();
 
-    // parse func
-    let similarity_fn = match func.as_str() {
-        "cosine" => cosine_similarity,
-        // "centered_cosine" => centered_cosine_similarity,
-        "euclidean" => euclidean_distance,
-        "manhattan" => manhattan_distance,
-        "chebyshev" => chebyshev_distance,
-        _ => panic!("Unknown similarity function"),
-    };
+    let repr1_2d: ArrayView4<f16> = ArrayView4::from_shape((4, n, n, m), repr1.as_slice().unwrap()).unwrap();
+    let repr2_2d: ArrayView4<f16> = ArrayView4::from_shape((4, n, n, m), repr2.as_slice().unwrap()).unwrap();
+    let time_reshape = js_sys::Date::now();
 
-    // Calculate similarities
-    let mut similarities = Vec::new();
-    let base_offset = (step1 * n * n + row * n + col) * m;
+    let base_slice = repr1_2d.slice(s![step1,row,col,..]).map(|&x| f32::from(x));
+    let mut similarities = Vec::with_capacity(n * n);
+    let time_slice = js_sys::Date::now();
+
     for j in 0..n {
         for i in 0..n {
-            let base_slice = &repr1[base_offset..base_offset + m];
-            let concept_offset = (step2 * n * n + i * n + j) * m;
-            let concept_slice = &repr2[concept_offset..concept_offset + m];
-
-            // Calculate similarity using the provided function
-            let similarity = similarity_fn(base_slice, concept_slice);
+            let concept_slice = repr2_2d.slice(s![step2,i,j,..]).map(|&x| f32::from(x));
+            let similarity = match func.as_str() {
+                "cosine" => cosine_similarity(&base_slice, &concept_slice),
+                "euclidean" => euclidean_distance(&base_slice, &concept_slice),
+                "manhattan" => manhattan_distance(&base_slice, &concept_slice),
+                "chebyshev" => chebyshev_distance(&base_slice, &concept_slice),
+                _ => panic!("Unknown similarity function"),
+            };
             similarities.push(similarity);
         }
     }
+    let time_sim = js_sys::Date::now();
 
-    // convert distance to similarity for euclidean, manhattan, and chebyshev
     if func == "euclidean" || func == "manhattan" || func == "chebyshev" {
-        let max_distance = similarities.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-        similarities = similarities.iter().map(|&d| 1.0 - d / max_distance).collect();
+        normalize_distances(&mut similarities);
     }
+    let time_norm = js_sys::Date::now();
+
+    console::log_1(&JsValue::from_str(&format!("Total {}, getting representations: {} ms, reshaping: {} ms, slicing: {} ms, similarity calculation: {} ms, normalization: {} ms", time_norm-time_start, time_repr - time_start, time_reshape - time_repr, time_slice - time_reshape, time_sim - time_slice, time_norm - time_sim)));
 
     Ok(similarities)
+}
+
+fn cosine_similarity(a: &Array1<f32>, b: &Array1<f32>) -> f32 {
+    let dot_product = a * b;
+    let norm_a = a.mapv(|x| x.powi(2)).sum().sqrt();
+    let norm_b = b.mapv(|x| x.powi(2)).sum().sqrt();
+    dot_product.sum() / (norm_a * norm_b)
+}
+
+fn normalize_distances(distances: &mut Vec<f32>) {
+    let max_distance = *distances.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+    for distance in distances.iter_mut() {
+        *distance = 1.0 - (*distance / max_distance);
+    }
+}
+
+fn euclidean_distance(a: &Array1<f32>, b: &Array1<f32>) -> f32 {
+    (a - b).mapv(|x| x.powi(2)).sum().sqrt()
+}
+
+fn manhattan_distance(a: &Array1<f32>, b: &Array1<f32>) -> f32 {
+    (a - b).mapv(|x| x.abs()).sum()
+}
+
+fn chebyshev_distance(a: &Array1<f32>, b: &Array1<f32>) -> f32 {
+    (a - b).mapv(|x| x.abs()).fold(0.0, |max, val| val.max(max))
 }
 
 

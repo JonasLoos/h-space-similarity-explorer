@@ -10,7 +10,7 @@ onmessage = function(e) {
         const similarities = wasm.calc_similarities(func, repr1_str, repr2_str, step1, step2, row, col, n, m);
         postMessage({ similarities });
       } catch (e) {
-        postMessage({ similarities: null });
+        postMessage({ similarities: 'loading' });
       }
     }
   })
