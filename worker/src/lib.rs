@@ -60,13 +60,13 @@ pub fn calc_similarities(
     let repr2_2d: ArrayView4<f32> = ArrayView4::from_shape((4, n, n, m), repr2.as_slice().unwrap()).unwrap();
     let time_reshape = js_sys::Date::now();
 
-    let base_slice = repr1_2d.slice(s![step1,row,col,..]).map(|&x| f32::from(x));
+    let base_slice = repr1_2d.slice(s![step1,row,col,..]);
     let mut similarities = Vec::with_capacity(n * n);
     let time_slice = js_sys::Date::now();
 
     for j in 0..n {
         for i in 0..n {
-            let concept_slice = repr2_2d.slice(s![step2,i,j,..]).map(|&x| f32::from(x));
+            let concept_slice = repr2_2d.slice(s![step2,i,j,..]);
             let similarity = match func.as_str() {
                 "cosine" => cosine_similarity(&base_slice, &concept_slice),
                 "euclidean" => euclidean_distance(&base_slice, &concept_slice),
@@ -89,7 +89,7 @@ pub fn calc_similarities(
     Ok(similarities)
 }
 
-fn cosine_similarity(a: &Array1<f32>, b: &Array1<f32>) -> f32 {
+fn cosine_similarity(a: &ArrayView1<f32>, b: &ArrayView1<f32>) -> f32 {
     let dot_product = a * b;
     let norm_a = a.mapv(|x| x.powi(2)).sum().sqrt();
     let norm_b = b.mapv(|x| x.powi(2)).sum().sqrt();
@@ -103,15 +103,15 @@ fn normalize_distances(distances: &mut Vec<f32>) {
     }
 }
 
-fn euclidean_distance(a: &Array1<f32>, b: &Array1<f32>) -> f32 {
+fn euclidean_distance(a: &ArrayView1<f32>, b: &ArrayView1<f32>) -> f32 {
     (a - b).mapv(|x| x.powi(2)).sum().sqrt()
 }
 
-fn manhattan_distance(a: &Array1<f32>, b: &Array1<f32>) -> f32 {
+fn manhattan_distance(a: &ArrayView1<f32>, b: &ArrayView1<f32>) -> f32 {
     (a - b).mapv(|x| x.abs()).sum()
 }
 
-fn chebyshev_distance(a: &Array1<f32>, b: &Array1<f32>) -> f32 {
+fn chebyshev_distance(a: &ArrayView1<f32>, b: &ArrayView1<f32>) -> f32 {
     (a - b).mapv(|x| x.abs()).fold(0.0, |max, val| val.max(max))
 }
 
