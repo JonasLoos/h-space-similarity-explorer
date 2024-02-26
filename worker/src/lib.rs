@@ -24,50 +24,44 @@ fn insert_repr(url: &str, data: Vec<f32>) {
 }
 
 // get representation from cache
-fn get_repr(url: &str) -> Option<ArrayView1<'static, f32>> {
+fn get_repr(url: &str, shape: (usize, usize, usize, usize)) -> Option<ArrayView4<'static, f32>> {
     GLOBAL_MAP.with(|map| {
         map.borrow().get(url).map(|arc_vec| {
-            // SAFETY: This is safe because the data in Arc<Vec<f32>> is guaranteed to live for the 'static lifetime.
-            // We are essentially extending the lifetime of the reference to 'static, which is valid because
-            // the data is owned by an Arc, ensuring it lives as long as necessary.
             let static_slice: &'static [f32] = unsafe {
                 std::mem::transmute(&arc_vec[..])
             };
-            ArrayView1::from(static_slice)
+            ArrayView4::from_shape(shape, static_slice).unwrap()
         })
     })
 }
 
 #[wasm_bindgen]
 pub fn calc_similarities(
-    func: String, 
-    repr1_str: String, 
-    repr2_str: String, 
-    step1: usize, 
-    step2: usize, 
-    row: usize, 
-    col: usize, 
-    n: usize, 
-    m: usize
+    func: String,
+    repr1_str: String,
+    repr2_str: String,
+    step1: usize,
+    step2: usize,
+    row: usize,
+    col: usize,
+    steps: usize,
+    n: usize,
+    m: usize,
 ) -> Result<Vec<f32>, JsValue> {
     console_error_panic_hook::set_once();
     let time_start = js_sys::Date::now();
 
-    let repr1 = get_repr(&repr1_str).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation 1, url: {}", repr1_str)))?;
-    let repr2 = get_repr(&repr2_str).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation 2, url: {}", repr2_str)))?;
+    let repr1 = get_repr(&repr1_str, (steps, n, n, m)).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation 1, url: {}", repr1_str)))?;
+    let repr2 = get_repr(&repr2_str, (steps, n, n, m)).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation 2, url: {}", repr2_str)))?;
     let time_repr = js_sys::Date::now();
 
-    let repr1_2d: ArrayView4<f32> = ArrayView4::from_shape((4, n, n, m), repr1.as_slice().unwrap()).unwrap();
-    let repr2_2d: ArrayView4<f32> = ArrayView4::from_shape((4, n, n, m), repr2.as_slice().unwrap()).unwrap();
-    let time_reshape = js_sys::Date::now();
-
-    let base_slice = repr1_2d.slice(s![step1,row,col,..]);
+    let base_slice = repr1.slice(s![step1,row,col,..]);
     let mut similarities = Vec::with_capacity(n * n);
     let time_slice = js_sys::Date::now();
 
     for j in 0..n {
         for i in 0..n {
-            let concept_slice = repr2_2d.slice(s![step2,i,j,..]);
+            let concept_slice = repr2.slice(s![step2,i,j,..]);
             let similarity = match func.as_str() {
                 "cosine" => cosine_similarity(&base_slice, &concept_slice),
                 "euclidean" => euclidean_distance(&base_slice, &concept_slice),
@@ -85,7 +79,7 @@ pub fn calc_similarities(
     }
     let time_norm = js_sys::Date::now();
 
-    console::log_1(&JsValue::from_str(&format!("Total {}, getting representations: {} ms, reshaping: {} ms, slicing: {} ms, similarity calculation: {} ms, normalization: {} ms", time_norm-time_start, time_repr - time_start, time_reshape - time_repr, time_slice - time_reshape, time_sim - time_slice, time_norm - time_sim)));
+    console::log_1(&JsValue::from_str(&format!("Total {}, getting representations: {} ms, slicing: {} ms, similarity calculation: {} ms, normalization: {} ms", time_norm-time_start, time_repr - time_start, time_slice - time_repr, time_sim - time_slice, time_norm - time_sim)));
 
     Ok(similarities)
 }

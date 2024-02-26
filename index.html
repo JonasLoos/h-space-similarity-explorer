@@ -615,7 +615,7 @@ function drawError(concept, loading) {
 
 // Update the canvas highlightings based on the mouse position
 function updateCanvases(base_concept, col, row) {
-  const { n, m } = current_model.getShapes();
+  const { steps, n, m, } = current_model.getShapes();
   // Check if the mouse is inside the canvas
   if (col < 0 || col >= n || row < 0 || row >= n) return;
 
@@ -652,7 +652,7 @@ function updateCanvases(base_concept, col, row) {
       img_ctx.fillRect(last_clicked.col * tile_size, last_clicked.row * tile_size, tile_size, tile_size);
     }
     // update tile canvas
-    useWasm('calc_similarities', { func, repr1_str: base_concept.getUrl(), repr2_str: concept.getUrl(), step1: base_concept.step-1, step2: concept.step-1, row, col, n, m })
+    useWasm('calc_similarities', { func, repr1_str: base_concept.getUrl(), repr2_str: concept.getUrl(), step1: base_concept.step-1, step2: concept.step-1, row, col, steps, n, m })
       .then(({similarities}) => {
         if (similarities === 'loading') {
           drawError(concept, true);
