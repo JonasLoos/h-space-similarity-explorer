@@ -4,5 +4,5 @@ This is a subproject in rust that is compiled to wasm and run in a webworker. It
 
 ## Build
 ```bash
-wasm-pack build --target web --release
+wasm-pack build --target web --release --no-typescript --no-pack
 ```

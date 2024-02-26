@@ -7,22 +7,23 @@ use std::cell::RefCell;
 use js_sys::{ArrayBuffer, Uint8Array};
 use console_error_panic_hook;
 use std::panic;
-use ndarray::{s, Array1, ArrayView1, ArrayView4};
+use ndarray::{s, ArrayView1, ArrayView4};
 use std::sync::Arc;
 
 
+// cache to store representations
 thread_local! {
     static GLOBAL_MAP: RefCell<HashMap<String, Arc<Vec<f32>>>> = RefCell::new(HashMap::new());
 }
 
-// Adjusted to insert data into the map
+// insert representation into cache
 fn insert_repr(url: &str, data: Vec<f32>) {
     GLOBAL_MAP.with(|map| {
         map.borrow_mut().insert(url.to_string(), Arc::new(data));
     });
 }
 
-// Adjusted to return an ArrayView1 with a 'static lifetime
+// get representation from cache
 fn get_repr(url: &str) -> Option<ArrayView1<'static, f32>> {
     GLOBAL_MAP.with(|map| {
         map.borrow().get(url).map(|arc_vec| {
