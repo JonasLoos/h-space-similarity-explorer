@@ -379,7 +379,8 @@ function updateCanvases(base_concept, col, row) {
 
   // Update the canvases
   const func = document.getElementById('similarity-measure').value;
-  for (const concept of concepts) {
+  const concepts_sorted = concepts.slice().sort((a, b) => b == base_concept);  // sort concepts so that the base concept is drawn first
+  for (const concept of concepts_sorted) {
     const tile_size = concept.image_ctx.canvas.width / n;
     // update image canvas
     const img_ctx = concept.image_ctx;
