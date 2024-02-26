@@ -131,25 +131,55 @@ let render_counter = 0;
 
 // setup webworker for similarity computations
 const worker = new Worker('worker/webworker.js', { type: 'module' });
-worker.promise = new Promise((resolve, reject) => {resolve()});
+worker.jobs = {};
+worker.job_counter = 0;
+worker.last_calc_promise = new Promise((resolve, reject) => {resolve()});
+worker.last_fetch_repr_promise = new Promise((resolve, reject) => {resolve()});
+worker.onmessage = (e) => {
+  const { id, data } = e.data;
+  // console.log('Received message:', e.data);
+  const job = worker.jobs[id];
+  if (job) {
+    job.resolve(data);
+    delete worker.jobs[id];
+  } else {
+    console.warn('Received message for unknown job:', e.data);
+  }
+};
+worker.onerror = (e) => {
+  console.error('Error in worker:', e);
+};
 
 // send a task to the webworker and return a promise
-function useWasm(task, data) {
-  // wait for the previous task to finish
-  const render_counter_backup = render_counter;
-  const promise = worker.promise.then(() => {
-    if (task == 'calc_similarities' && render_counter_backup !== render_counter) {
-      return { similarities: 'outdated' };
-    }
-    const promise = new Promise((resolve, reject) => {
-      worker.onmessage = (e) => {resolve(e.data)};
-      worker.onerror = reject;
-      worker.postMessage({ task, data });
-    });
-    return promise;
+function callWasm(task, data) {
+  // TODO: somethimes the first job is lost and then no calculations are successful anymore, because no representations load.
+  const id = worker.job_counter++;
+  const job = {id, task}
+  const promise = new Promise((resolve, reject) => {
+    job.resolve = resolve;
+    job.reject = reject;
   });
-  worker.promise = promise;
-  return promise;
+  if (task === 'calc_similarities') {
+    // wait for the previous calculation task to finish
+    const render_counter_backup = render_counter;
+    worker.last_calc_promise = worker.last_calc_promise.then(() => {
+      if (render_counter_backup !== render_counter) {
+        return 'outdated';
+      }
+      worker.jobs[id] = job;
+      worker.postMessage({ id, task, data });
+      return promise;
+    });
+    return worker.last_calc_promise;
+  } else {
+    worker.last_fetch_repr_promise = worker.last_fetch_repr_promise.then(() => {
+      console.log('Fetching repr:', id, task, data.url);
+      worker.jobs[id] = job;
+      worker.postMessage({ id, task, data });
+      return promise;
+    });
+    return worker.last_fetch_repr_promise;
+  }
 }
 
 
@@ -201,7 +231,7 @@ function setupConcept({ index, initial_step }, i) {
   // helper function to load the representation
   const getRepr = () => {
     concept.repr_loading_started = Date.now();
-    useWasm('fetch_repr', { url: concept.getUrl() })
+    callWasm('fetch_repr', { url: concept.getUrl() })
       .then(() => {
         console.log(`Fetched repr for ${concept.name} from ${concept.getUrl()}`);
         updateCanvasesWithLastClicked();
@@ -343,7 +373,7 @@ function drawSimilarities(concept, similarities) {
   concept.text.textContent = `${averageSimilarity.toFixed(4)}`;
 }
 
-function drawError(concept, loading) {
+function drawError(concept, msg) {
   const tile_ctx = concept.tile_ctx;
   const { width, height } = tile_ctx.canvas;
   tile_ctx.clearRect(0, 0, width, height);
@@ -353,13 +383,10 @@ function drawError(concept, loading) {
   tile_ctx.textBaseline = 'middle';
   const loading_dots_count = Math.floor((Date.now() % 1000) / 250);
   const loading_dots = '.'.repeat(loading_dots_count) + ' '.repeat(3 - loading_dots_count);
-  if (loading) {
-    // display loading text after 500ms
-    tile_ctx.fillText('Loading'+loading_dots, width / 2, height / 2);
-  } else {
-    // repr_loading_started is null if the request failed
-    tile_ctx.fillText('Error.', width / 2, height / 2);
-    tile_ctx.fillText('Try to change settings', width / 2, height / 2 + 40);
+  msg = msg.replace('...', loading_dots);
+  const lines = msg.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    tile_ctx.fillText(lines[i], width / 2, height / 2 - (lines.length-1) * 20 + i * 40);
   }
   concept.text.textContent = `?`;
 }
@@ -405,10 +432,10 @@ function updateCanvases(base_concept, col, row) {
       img_ctx.fillRect(last_clicked.col * tile_size, last_clicked.row * tile_size, tile_size, tile_size);
     }
     // update tile canvas
-    useWasm('calc_similarities', { func, repr1_str: base_concept.getUrl(), repr2_str: concept.getUrl(), step1: base_concept.step-1, step2: concept.step-1, row, col, steps, n, m })
-      .then(({similarities}) => {
+    callWasm('calc_similarities', { func, repr1_str: base_concept.getUrl(), repr2_str: concept.getUrl(), step1: base_concept.step-1, step2: concept.step-1, row, col, steps, n, m })
+      .then((similarities) => {
         if (similarities === 'loading') {
-          drawError(concept, true);
+          drawError(concept, 'Loading...');
           updateCanvasesSoon(base_concept, col, row);  // schedule update to check if representations are loaded and animate loading text
           return;
         } else if (similarities === 'outdated') {
@@ -419,7 +446,7 @@ function updateCanvases(base_concept, col, row) {
       })
       .catch((error) => {
         // console.error('Error while calculating similarities:', error);
-        drawError(concept);
+        drawError(concept, 'Error calculating similarities...\nTry to change settings.');
         updateCanvasesSoon(base_concept, col, row);  // schedule update to check if representations are loaded and animate loading text
       });
   }
@@ -438,16 +465,16 @@ function updateCanvasesSoon(concept, col, row) {
   // force update
   last_tile = null;
   // update now if the last update was more than 100ms ago, to ensure updates even when this function is called often
-  if (self.timer && self.last_updated && self.last_updated + 100 < Date.now()) {
+  if (self.timer && self.last_updated && self.last_updated + 200 < Date.now()) {
     self.last_updated = Date.now();
     updateCanvases(concept, col, row);
   }
-  // scehdule update in 100ms
+  // scehdule update in 200ms
   clearTimeout(self.timer);
   self.timer = setTimeout(() => {
     self.last_updated = Date.now();
     updateCanvases(concept, col, row);
-  }, 100);
+  }, 200);
 }
 
 

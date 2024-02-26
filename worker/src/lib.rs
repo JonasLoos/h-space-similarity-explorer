@@ -49,14 +49,23 @@ pub fn calc_similarities(
     m: usize,
 ) -> Result<Vec<f32>, JsValue> {
     console_error_panic_hook::set_once();
+    #[cfg(debug_assertions)]
     let time_start = js_sys::Date::now();
+
+    // log available repr
+    // GLOBAL_MAP.with(|map| {
+    //     let reprs = map.borrow();
+    //     console::log_1(&JsValue::from_str(&format!("Available reprs: {:?}", reprs.keys())));
+    // });
 
     let repr1 = get_repr(&repr1_str, (steps, n, n, m)).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation 1, url: {}", repr1_str)))?;
     let repr2 = get_repr(&repr2_str, (steps, n, n, m)).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation 2, url: {}", repr2_str)))?;
+    #[cfg(debug_assertions)]
     let time_repr = js_sys::Date::now();
 
     let base_slice = repr1.slice(s![step1,row,col,..]);
     let mut similarities = Vec::with_capacity(n * n);
+    #[cfg(debug_assertions)]
     let time_slice = js_sys::Date::now();
 
     for j in 0..n {
@@ -72,13 +81,16 @@ pub fn calc_similarities(
             similarities.push(similarity);
         }
     }
+    #[cfg(debug_assertions)]
     let time_sim = js_sys::Date::now();
 
     if func == "euclidean" || func == "manhattan" || func == "chebyshev" {
         normalize_distances(&mut similarities);
     }
+    #[cfg(debug_assertions)]
     let time_norm = js_sys::Date::now();
 
+    #[cfg(debug_assertions)]
     console::log_1(&JsValue::from_str(&format!("Total {}, getting representations: {} ms, slicing: {} ms, similarity calculation: {} ms, normalization: {} ms", time_norm-time_start, time_repr - time_start, time_slice - time_repr, time_sim - time_slice, time_norm - time_sim)));
 
     Ok(similarities)
@@ -117,6 +129,7 @@ pub async fn fetch_repr(url: String) -> Result<(), JsValue> {
 
     // if the representation is already fetched, return
     if GLOBAL_MAP.with(|map| map.borrow().contains_key(&url)) {
+        console::log_1(&JsValue::from_str(&format!("Representation already fetched: {}", url)));
         return Ok(());
     }
 
@@ -145,6 +158,12 @@ pub async fn fetch_repr(url: String) -> Result<(), JsValue> {
 
     let float32_data_rc = float16_data.iter().map(|&x| f32::from(x)).collect::<Vec<f32>>();
     insert_repr(&url, float32_data_rc);
+
+    // log available repr
+    GLOBAL_MAP.with(|map| {
+        let reprs = map.borrow();
+        console::log_1(&JsValue::from_str(&format!("Available reprs: {:?}", reprs.keys())));
+    });
 
     Ok(())
 }
