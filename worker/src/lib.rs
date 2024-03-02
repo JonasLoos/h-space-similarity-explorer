@@ -33,7 +33,7 @@ pub fn calc_similarities(
     console_error_panic_hook::set_once();
 
     // log time for debugging
-    let time_start = js_sys::Date::now();
+    // let time_start = js_sys::Date::now();
 
     // get representations from cache
     GLOBAL_MAP.with(|map| {
@@ -52,7 +52,7 @@ pub fn calc_similarities(
         } else { None };
 
         // log time for debugging
-        let time_after_loading = js_sys::Date::now();
+        // let time_after_loading = js_sys::Date::now();
 
         // calculate similarities
         let a: ArrayView1<f32> = repr1.slice(s![step1,row*n+col,..]);
@@ -87,7 +87,7 @@ pub fn calc_similarities(
         };
 
         // log time for debugging
-        let time_sim = js_sys::Date::now();
+        // let time_sim = js_sys::Date::now();
 
         // normalize distances
         if func == "euclidean" || func == "manhattan" || func == "chebyshev" {
@@ -98,10 +98,10 @@ pub fn calc_similarities(
         }
 
         // log time for debugging
-        let time_final = js_sys::Date::now();
+        // let time_final = js_sys::Date::now();
 
         // log time for debugging
-        console::log_1(&JsValue::from_str(&format!("Total {}, getting representations: {} ms, similarity calculation: {} ms, normalization: {} ms", time_final-time_start, time_after_loading - time_start, time_sim - time_after_loading, time_final - time_sim)));
+        // console::log_1(&JsValue::from_str(&format!("Total {}, getting representations: {} ms, similarity calculation: {} ms, normalization: {} ms", time_final-time_start, time_after_loading - time_start, time_sim - time_after_loading, time_final - time_sim)));
 
         Ok(similarities)
     })
