@@ -7,34 +7,18 @@ use std::cell::RefCell;
 use js_sys::{ArrayBuffer, Uint8Array};
 use console_error_panic_hook;
 use std::panic;
-use ndarray::{s, ArrayView1, ArrayView4};
+use ndarray::{s, Array1, Array2, Array3, ArrayView1, Axis, Zip};
+use ndarray::parallel::prelude::*;
 use std::sync::Arc;
 
 
-// cache to store representations
+// cache to store representations and means
 thread_local! {
-    static GLOBAL_MAP: RefCell<HashMap<String, Arc<Vec<f32>>>> = RefCell::new(HashMap::new());
+    static GLOBAL_MAP: RefCell<HashMap<String, Arc<(Array3<f32>,Array2<f32>,Array2<f32>)>>> = RefCell::new(HashMap::new());
 }
 
-// insert representation into cache
-fn insert_repr(url: &str, data: Vec<f32>) {
-    GLOBAL_MAP.with(|map| {
-        map.borrow_mut().insert(url.to_string(), Arc::new(data));
-    });
-}
 
-// get representation from cache
-fn get_repr(url: &str, shape: (usize, usize, usize, usize)) -> Option<ArrayView4<'static, f32>> {
-    GLOBAL_MAP.with(|map| {
-        map.borrow().get(url).map(|arc_vec| {
-            let static_slice: &'static [f32] = unsafe {
-                std::mem::transmute(&arc_vec[..])
-            };
-            ArrayView4::from_shape(shape, static_slice).unwrap()
-        })
-    })
-}
-
+// calculate similarities between one pixel of a base representation and all pixels of a second representation
 #[wasm_bindgen]
 pub fn calc_similarities(
     func: String,
@@ -44,125 +28,124 @@ pub fn calc_similarities(
     step2: usize,
     row: usize,
     col: usize,
-    steps: usize,
-    n: usize,
-    m: usize,
 ) -> Result<Vec<f32>, JsValue> {
+
+    // better error messages in the console
     console_error_panic_hook::set_once();
-    #[cfg(debug_assertions)]
+
+    // log time for debugging
     let time_start = js_sys::Date::now();
 
-    // log available repr
-    // GLOBAL_MAP.with(|map| {
-    //     let reprs = map.borrow();
-    //     console::log_1(&JsValue::from_str(&format!("Available reprs: {:?}", reprs.keys())));
-    // });
+    // get representations from cache
+    GLOBAL_MAP.with(|map| {
+        let reprs = map.borrow();
+        let arc_data1 = reprs.get(&repr1_str).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation, url: {}", repr1_str)))?;
+        let arc_data2 = reprs.get(&repr2_str).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation, url: {}", repr2_str)))?;
+        let (repr1, repr2, means1_full, means2_full, norms1, norms2) = (&arc_data1.0, &arc_data2.0, &arc_data1.1, &arc_data2.1, &arc_data1.2, &arc_data2.2);
+        let n = (repr1.shape()[1] as f32).sqrt() as usize;
 
-    let repr1 = get_repr(&repr1_str, (steps, n, n, m)).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation 1, url: {}", repr1_str)))?;
-    let repr2 = get_repr(&repr2_str, (steps, n, n, m)).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation 2, url: {}", repr2_str)))?;
-    #[cfg(debug_assertions)]
-    let time_repr = js_sys::Date::now();
+        
+        // log time for debugging
+        let time_repr = js_sys::Date::now();
 
-    let base_slice = repr1.slice(s![step1,row,col,..]);
-    let mut similarities = Vec::with_capacity(n * n);
-    #[cfg(debug_assertions)]
-    let time_slice = js_sys::Date::now();
+        // get slices of representations
+        let base_slice: ArrayView1<f32> = repr1.slice(s![step1,row*n+col,..]);
 
-    for j in 0..n {
-        for i in 0..n {
-            let concept_slice = repr2.slice(s![step2,i,j,..]);
-            let similarity = match func.as_str() {
-                "cosine" => cosine_similarity(&base_slice, &concept_slice),
-                "euclidean" => euclidean_distance(&base_slice, &concept_slice),
-                "manhattan" => manhattan_distance(&base_slice, &concept_slice),
-                "chebyshev" => chebyshev_distance(&base_slice, &concept_slice),
-                _ => panic!("Unknown similarity function"),
-            };
-            similarities.push(similarity);
+        // calculate mean of bath representations
+        let means = if func == "cosine_centered" {
+            Some(
+                Zip::from(&means1_full.slice(s![step1,..]))
+                    .and(&means2_full.slice(s![step2,..]))
+                    .map_collect(|&mean1, &mean2| ((mean1 + mean2) / 2.0)))
+        } else { None };
+
+        // log time for debugging
+        let time_slice = js_sys::Date::now();
+
+        // calculate similarities
+        let mut similarities: Vec<f32> = match func.as_str() {
+            "cosine" => Zip::from(repr2.slice(s![step2,..,..]).axis_iter(Axis(0))).and(norms1.slice(s![step1,..])).and(norms2.slice(s![step2,..])).par_map_collect(|concept_slice, norm1, norm2| Zip::from(base_slice).and(concept_slice).fold(0.0, |acc, &ai, &bi| acc + ai * bi) / (norm1 * norm2)),
+            "cosine_centered" => Zip::from(repr2.slice(s![step2,..,..]).axis_iter(Axis(0))).and(norms1.slice(s![step1,..])).and(norms2.slice(s![step2,..])).par_map_collect(|concept_slice, norm1, norm2| Zip::from(base_slice).and(concept_slice).and(means.as_ref().unwrap().view()).fold(0.0, |acc, &ai, &bi, &mean| acc + (ai - mean) * (bi - mean)) / (norm1 * norm2)),
+            "euclidean" => repr2.slice(s![step2,..,..]).axis_iter(Axis(0)).map(|concept_slice| Zip::from(base_slice).and(concept_slice).fold(0.0, |acc: f32, &ai, &bi| acc + (ai - bi).powi(2)).sqrt()).collect(),
+            "manhattan" => repr2.slice(s![step2,..,..]).axis_iter(Axis(0)).map(|concept_slice| Zip::from(base_slice).and(concept_slice).fold(0.0, |acc: f32, &ai, &bi| acc + (ai - bi).abs())).collect(),
+            "chebyshev" => repr2.slice(s![step2,..,..]).axis_iter(Axis(0)).map(|concept_slice| Zip::from(base_slice).and(concept_slice).fold(0.0, |acc: f32, &ai, &bi| acc.max((ai - bi).abs()))).collect(),
+            _ => panic!("Unknown similarity function"),
+        }.to_vec();
+
+        // log time for debugging
+        let time_sim = js_sys::Date::now();
+
+        // normalize distances
+        if func == "euclidean" || func == "manhattan" || func == "chebyshev" {
+            let max_distance = *similarities.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+            for distance in similarities.iter_mut() {
+                *distance = 1.0 - (*distance / max_distance);
+            }
         }
-    }
-    #[cfg(debug_assertions)]
-    let time_sim = js_sys::Date::now();
 
-    if func == "euclidean" || func == "manhattan" || func == "chebyshev" {
-        normalize_distances(&mut similarities);
-    }
-    #[cfg(debug_assertions)]
-    let time_norm = js_sys::Date::now();
+        // log time for debugging
+        let time_norm = js_sys::Date::now();
 
-    #[cfg(debug_assertions)]
-    console::log_1(&JsValue::from_str(&format!("Total {}, getting representations: {} ms, slicing: {} ms, similarity calculation: {} ms, normalization: {} ms", time_norm-time_start, time_repr - time_start, time_slice - time_repr, time_sim - time_slice, time_norm - time_sim)));
+        // log time for debugging
+        console::log_1(&JsValue::from_str(&format!("Total {}, getting representations: {} ms, slicing: {} ms, similarity calculation: {} ms, normalization: {} ms", time_norm-time_start, time_repr - time_start, time_slice - time_repr, time_sim - time_slice, time_norm - time_sim)));
 
-    Ok(similarities)
-}
-
-fn cosine_similarity(a: &ArrayView1<f32>, b: &ArrayView1<f32>) -> f32 {
-    let dot_product = a * b;
-    let norm_a = a.mapv(|x| x.powi(2)).sum().sqrt();
-    let norm_b = b.mapv(|x| x.powi(2)).sum().sqrt();
-    dot_product.sum() / (norm_a * norm_b)
-}
-
-fn normalize_distances(distances: &mut Vec<f32>) {
-    let max_distance = *distances.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-    for distance in distances.iter_mut() {
-        *distance = 1.0 - (*distance / max_distance);
-    }
-}
-
-fn euclidean_distance(a: &ArrayView1<f32>, b: &ArrayView1<f32>) -> f32 {
-    (a - b).mapv(|x| x.powi(2)).sum().sqrt()
-}
-
-fn manhattan_distance(a: &ArrayView1<f32>, b: &ArrayView1<f32>) -> f32 {
-    (a - b).mapv(|x| x.abs()).sum()
-}
-
-fn chebyshev_distance(a: &ArrayView1<f32>, b: &ArrayView1<f32>) -> f32 {
-    (a - b).mapv(|x| x.abs()).fold(0.0, |max, val| val.max(max))
+        Ok(similarities)
+    })
 }
 
 
+// fetch representation from url and store it in cache
 #[wasm_bindgen]
-pub async fn fetch_repr(url: String) -> Result<(), JsValue> {
+pub async fn fetch_repr(url: String, steps: usize, n: usize, m: usize) -> Result<(), JsValue> {
     console_error_panic_hook::set_once();  // better error messages in the console
 
     // if the representation is already fetched, return
     if GLOBAL_MAP.with(|map| map.borrow().contains_key(&url)) {
-        console::log_1(&JsValue::from_str(&format!("Representation already fetched: {}", url)));
+        console::log_1(&JsValue::from_str(&format!("WASM: Representation already fetched: {}", url)));
         return Ok(());
     }
 
+    // initialize fetch request
     let mut opts = RequestInit::new();
     opts.method("GET");
     opts.mode(RequestMode::Cors);
-
     let request = Request::new_with_str_and_init(&url, &opts)?;
+
+    // fetch representation
     let global = js_sys::global().unchecked_into::<web_sys::WorkerGlobalScope>();
-    let resp_value = JsFuture::from(global.fetch_with_request(&request)).await?;
+    let resp_value = match JsFuture::from(global.fetch_with_request(&request)).await {
+        Ok(value) => value,
+        Err(e) => {
+            console::warn_1(&JsValue::from_str(&format!("WASM: Fetch error: {:?}", e)));
+            return Err(JsValue::from_str(&format!("Failed to fetch representation: {}", url)))
+        }
+    };
     let resp: Response = match resp_value.dyn_into() {
         Ok(resp) => resp,
-        Err(_) => return Err(JsValue::from_str("Failed to get Response: resp_value.dyn_into() failed")),
+        Err(_) => {
+            console::warn_1(&JsValue::from_str("WASM: Failed to get Response: resp_value.dyn_into() failed"));
+            return Err(JsValue::from_str("Failed to get Response: resp_value.dyn_into() failed"));
+        }
     };
 
+    // convert response to float16 vector
     let buffer_value = JsFuture::from(resp.array_buffer()?).await?;
     let buffer: ArrayBuffer = match buffer_value.dyn_into() {
         Ok(buffer) => buffer,
         Err(_) => return Err(JsValue::from_str("Failed to get ArrayBuffer: buffer_value.dyn_into() failed")),
     };
-    if buffer.byte_length() % 4 != 0 {
-        return Err(JsValue::from_str("Buffer length is not a multiple of 4"));
+    if buffer.byte_length() % 2 != 0 {
+        return Err(JsValue::from_str("Buffer length is not a multiple of 2 (for float16)"));
     }
     let bytes = Uint8Array::new(&buffer).to_vec();
-    let float16_data: Vec<f16> = bytes.chunks(4).map(|chunk| f16::from_f32(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))).collect();
+    let float16_data: Vec<f16> = bytes.chunks(2).map(|chunk| f16::from_le_bytes([chunk[0], chunk[1]])).collect();
 
-    let float32_data_rc = float16_data.iter().map(|&x| f32::from(x)).collect::<Vec<f32>>();
-    insert_repr(&url, float32_data_rc);
-
-    // log available repr
+    // convert float16 vector to Array4<f32> and store it in cache
+    let representations = Array3::from_shape_vec((steps, n*n, m), float16_data.iter().map(|&x| f32::from(x)).collect()).unwrap();
+    let means = representations.mean_axis(Axis(1)).unwrap();
+    let norms = representations.mapv(|x| x.powi(2)).sum_axis(Axis(2)).mapv(f32::sqrt);
     GLOBAL_MAP.with(|map| {
-        let reprs = map.borrow();
-        console::log_1(&JsValue::from_str(&format!("Available reprs: {:?}", reprs.keys())));
+        map.borrow_mut().insert(url.to_string(), Arc::new((representations, means, norms)));
     });
 
     Ok(())

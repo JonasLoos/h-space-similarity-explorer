@@ -137,7 +137,6 @@ worker.last_calc_promise = new Promise((resolve, reject) => {resolve()});
 worker.last_fetch_repr_promise = new Promise((resolve, reject) => {resolve()});
 worker.onmessage = (e) => {
   const { id, data } = e.data;
-  // console.log('Received message:', e.data);
   const job = worker.jobs[id];
   if (job) {
     job.resolve(data);
@@ -152,7 +151,6 @@ worker.onerror = (e) => {
 
 // send a task to the webworker and return a promise
 function callWasm(task, data) {
-  // TODO: somethimes the first job is lost and then no calculations are successful anymore, because no representations load.
   const id = worker.job_counter++;
   const job = {id, task}
   const promise = new Promise((resolve, reject) => {
@@ -171,7 +169,7 @@ function callWasm(task, data) {
       return promise;
     });
     return worker.last_calc_promise;
-  } else {
+  } else if (task === 'fetch_repr') {
     worker.last_fetch_repr_promise = worker.last_fetch_repr_promise.then(() => {
       console.log('Fetching repr:', id, task, data.url);
       worker.jobs[id] = job;
@@ -179,6 +177,8 @@ function callWasm(task, data) {
       return promise;
     });
     return worker.last_fetch_repr_promise;
+  } else {
+    console.error('Unknown task:', task);
   }
 }
 
@@ -231,7 +231,8 @@ function setupConcept({ index, initial_step }, i) {
   // helper function to load the representation
   const getRepr = () => {
     concept.repr_loading_started = Date.now();
-    callWasm('fetch_repr', { url: concept.getUrl() })
+    const { steps, n, m } = current_model.getShapes();
+    callWasm('fetch_repr', { url: concept.getUrl(), steps, n, m })
       .then(() => {
         console.log(`Fetched repr for ${concept.name} from ${concept.getUrl()}`);
         updateCanvasesWithLastClicked();
@@ -362,7 +363,7 @@ function drawSimilarities(concept, similarities) {
   tile_ctx.clearRect(0, 0, width, height);
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
-      const similarity = similarities[i * n + j];
+      const similarity = similarities[i + j * n];
       // draw orange for positive similarity and blue for negative similarity
       tile_ctx.fillStyle = similarity > 0 ? `rgba(255, 165, 0, ${similarity})` : `rgba(0, 165, 255, ${-similarity})`;
       tile_ctx.fillRect(i * tile_size, j * tile_size, tile_size, tile_size);
@@ -394,7 +395,7 @@ function drawError(concept, msg) {
 
 // Update the canvas highlightings based on the mouse position
 function updateCanvases(base_concept, col, row) {
-  const { steps, n, m, } = current_model.getShapes();
+  const { n } = current_model.getShapes();
   // Check if the mouse is inside the canvas
   if (col < 0 || col >= n || row < 0 || row >= n) return;
 
@@ -432,7 +433,7 @@ function updateCanvases(base_concept, col, row) {
       img_ctx.fillRect(last_clicked.col * tile_size, last_clicked.row * tile_size, tile_size, tile_size);
     }
     // update tile canvas
-    callWasm('calc_similarities', { func, repr1_str: base_concept.getUrl(), repr2_str: concept.getUrl(), step1: base_concept.step-1, step2: concept.step-1, row, col, steps, n, m })
+    callWasm('calc_similarities', { func, repr1_str: base_concept.getUrl(), repr2_str: concept.getUrl(), step1: base_concept.step-1, step2: concept.step-1, row, col })
       .then((similarities) => {
         if (similarities === 'loading') {
           drawError(concept, 'Loading...');
