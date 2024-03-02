@@ -7,8 +7,7 @@ use std::cell::RefCell;
 use js_sys::{ArrayBuffer, Uint8Array};
 use console_error_panic_hook;
 use std::panic;
-use ndarray::{s, Array1, Array2, Array3, ArrayView1, Axis, Zip};
-use ndarray::parallel::prelude::*;
+use ndarray::{s, Array2, Array3, ArrayView1, Axis, Zip};
 use std::sync::Arc;
 
 
@@ -44,13 +43,6 @@ pub fn calc_similarities(
         let (repr1, repr2, means1_full, means2_full, norms1, norms2) = (&arc_data1.0, &arc_data2.0, &arc_data1.1, &arc_data2.1, &arc_data1.2, &arc_data2.2);
         let n = (repr1.shape()[1] as f32).sqrt() as usize;
 
-        
-        // log time for debugging
-        let time_repr = js_sys::Date::now();
-
-        // get slices of representations
-        let base_slice: ArrayView1<f32> = repr1.slice(s![step1,row*n+col,..]);
-
         // calculate mean of bath representations
         let means = if func == "cosine_centered" {
             Some(
@@ -60,17 +52,39 @@ pub fn calc_similarities(
         } else { None };
 
         // log time for debugging
-        let time_slice = js_sys::Date::now();
+        let time_after_loading = js_sys::Date::now();
 
         // calculate similarities
+        let a: ArrayView1<f32> = repr1.slice(s![step1,row*n+col,..]);
         let mut similarities: Vec<f32> = match func.as_str() {
-            "cosine" => Zip::from(repr2.slice(s![step2,..,..]).axis_iter(Axis(0))).and(norms1.slice(s![step1,..])).and(norms2.slice(s![step2,..])).par_map_collect(|concept_slice, norm1, norm2| Zip::from(base_slice).and(concept_slice).fold(0.0, |acc, &ai, &bi| acc + ai * bi) / (norm1 * norm2)),
-            "cosine_centered" => Zip::from(repr2.slice(s![step2,..,..]).axis_iter(Axis(0))).and(norms1.slice(s![step1,..])).and(norms2.slice(s![step2,..])).par_map_collect(|concept_slice, norm1, norm2| Zip::from(base_slice).and(concept_slice).and(means.as_ref().unwrap().view()).fold(0.0, |acc, &ai, &bi, &mean| acc + (ai - mean) * (bi - mean)) / (norm1 * norm2)),
-            "euclidean" => repr2.slice(s![step2,..,..]).axis_iter(Axis(0)).map(|concept_slice| Zip::from(base_slice).and(concept_slice).fold(0.0, |acc: f32, &ai, &bi| acc + (ai - bi).powi(2)).sqrt()).collect(),
-            "manhattan" => repr2.slice(s![step2,..,..]).axis_iter(Axis(0)).map(|concept_slice| Zip::from(base_slice).and(concept_slice).fold(0.0, |acc: f32, &ai, &bi| acc + (ai - bi).abs())).collect(),
-            "chebyshev" => repr2.slice(s![step2,..,..]).axis_iter(Axis(0)).map(|concept_slice| Zip::from(base_slice).and(concept_slice).fold(0.0, |acc: f32, &ai, &bi| acc.max((ai - bi).abs()))).collect(),
+            "cosine" => repr2.slice(s![step2, .., ..])
+                .axis_iter(Axis(0))
+                .enumerate()
+                .map(|(index, b)| b.dot(&a) / (norms1[[step1, index]] * norms2[[step2, index]]))
+                .collect::<Vec<_>>(),
+            "cosine_centered" => repr2.slice(s![step2,..,..])
+                .axis_iter(Axis(0))
+                .enumerate()
+                .map(|(index, b)|
+                    Zip::from(a)
+                        .and(b)
+                        .and(means.as_ref().unwrap().view())
+                        .fold(0.0, |acc, &ai, &bi, &mean| acc + (ai - mean) * (bi - mean)) / (norms1[[step1, index]] * norms2[[step2, index]]))
+                .collect::<Vec<_>>(),
+            "manhattan" => repr2.slice(s![step2,..,..])
+                .axis_iter(Axis(0))
+                .map(|b| Zip::from(a).and(b).fold(0.0, |acc, &ai, &bi| acc + (ai - bi).abs()))
+                .collect::<Vec<_>>(),
+            "euclidean" => repr2.slice(s![step2,..,..])
+                .axis_iter(Axis(0))
+                .map(|b| Zip::from(a).and(b).fold(0.0, |acc, &ai, &bi| acc + (ai - bi).powi(2)).sqrt())
+                .collect::<Vec<_>>(),
+            "chebyshev" => repr2.slice(s![step2,..,..])
+                .axis_iter(Axis(0))
+                .map(|b| Zip::from(a).and(b).fold(0.0, |acc: f32, &ai, &bi| acc.max((ai - bi).abs())))
+                .collect::<Vec<_>>(),
             _ => panic!("Unknown similarity function"),
-        }.to_vec();
+        };
 
         // log time for debugging
         let time_sim = js_sys::Date::now();
@@ -84,10 +98,10 @@ pub fn calc_similarities(
         }
 
         // log time for debugging
-        let time_norm = js_sys::Date::now();
+        let time_final = js_sys::Date::now();
 
         // log time for debugging
-        console::log_1(&JsValue::from_str(&format!("Total {}, getting representations: {} ms, slicing: {} ms, similarity calculation: {} ms, normalization: {} ms", time_norm-time_start, time_repr - time_start, time_slice - time_repr, time_sim - time_slice, time_norm - time_sim)));
+        console::log_1(&JsValue::from_str(&format!("Total {}, getting representations: {} ms, similarity calculation: {} ms, normalization: {} ms", time_final-time_start, time_after_loading - time_start, time_sim - time_after_loading, time_final - time_sim)));
 
         Ok(similarities)
     })
