@@ -371,7 +371,8 @@ function drawSimilarities(concept, similarities) {
   }
   // calculate and update average similarity
   const averageSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length;
-  concept.text.textContent = `${averageSimilarity.toFixed(4)}`;
+  const stdDev = Math.sqrt(similarities.reduce((a, b) => a + (b - averageSimilarity) ** 2, 0) / similarities.length);
+  concept.text.textContent = `${averageSimilarity.toFixed(3)}±${stdDev.toFixed(3)}`;
 }
 
 function drawError(concept, msg) {
