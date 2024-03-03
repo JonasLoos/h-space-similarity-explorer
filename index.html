@@ -126,6 +126,61 @@ const initial_concepts = [
   { index: 1, initial_step: 4, },
   { index: 1, initial_step: 2, },
 ];
+let render_counter = 0;
+
+
+// setup webworker for similarity computations
+const worker = new Worker('worker/webworker.js', { type: 'module' });
+worker.jobs = {};
+worker.job_counter = 0;
+worker.last_calc_promise = new Promise((resolve, reject) => {resolve()});
+worker.last_fetch_repr_promise = new Promise((resolve, reject) => {resolve()});
+worker.onmessage = (e) => {
+  const { id, data } = e.data;
+  const job = worker.jobs[id];
+  if (job) {
+    job.resolve(data);
+    delete worker.jobs[id];
+  } else {
+    console.warn('Received message for unknown job:', e.data);
+  }
+};
+worker.onerror = (e) => {
+  console.error('Error in worker:', e);
+};
+
+// send a task to the webworker and return a promise
+function callWasm(task, data) {
+  const id = worker.job_counter++;
+  const job = {id, task}
+  const promise = new Promise((resolve, reject) => {
+    job.resolve = resolve;
+    job.reject = reject;
+  });
+  if (task === 'calc_similarities') {
+    // wait for the previous calculation task to finish
+    const render_counter_backup = render_counter;
+    worker.last_calc_promise = worker.last_calc_promise.then(() => {
+      if (render_counter_backup !== render_counter) {
+        return 'outdated';
+      }
+      worker.jobs[id] = job;
+      worker.postMessage({ id, task, data });
+      return promise;
+    });
+    return worker.last_calc_promise;
+  } else if (task === 'fetch_repr') {
+    worker.last_fetch_repr_promise = worker.last_fetch_repr_promise.then(() => {
+      console.log('Fetching repr:', id, task, data.url);
+      worker.jobs[id] = job;
+      worker.postMessage({ id, task, data });
+      return promise;
+    });
+    return worker.last_fetch_repr_promise;
+  } else {
+    console.error('Unknown task:', task);
+  }
+}
 
 
 // create an html element with attributes and append it to a parent
@@ -171,51 +226,15 @@ function setupConcept({ index, initial_step }, i) {
   concept.image_ctx = concept.image_canvas.getContext('2d');
   concept.tile_ctx = concept.tile_canvas.getContext('2d');
 
+  concept.getUrl = () => `/representations/${current_model.short}/${concept.name}/repr-${current_position}.bin`;
+
   // helper function to load the representation
   const getRepr = () => {
-    const url = `representations/${current_model.short}/${concept.name}/repr-${current_position}.bin`;
-    if (repr_cache[url]) {
-      concept.repr = repr_cache[url];
-      concept.repr_means = repr_cache[url+'_means'];
-      updateCanvasesWithLastClicked();
-      return;
-    }
-    concept.repr = null;
-    concept.repr_means = null;
     concept.repr_loading_started = Date.now();
-    // backup current model name and position, as they might change during the fetch
-    const current_model_name_backup = current_model.name;
-    const current_position_backup = current_position;
-    fetch(url)
-      .then(response => response.arrayBuffer())
-      .then(buffer => {
-
-        // check if the model or position changed during the fetch
-        if (current_model_name_backup !== current_model.name || current_position_backup !== current_position) {
-          console.log(`Fetched repr for ${concept.name} with length ${buffer.byteLength} after model or position changed. Ignoring.`);
-          return;
-        }
-
-        // store representation
-        const repr = new Float32Array(buffer);
-        const num_nans = repr.reduce((a, b) => a + (isNaN(b) ? 1 : 0), 0);
-        console.log(`Fetched repr for ${concept.name} with length ${repr.length} with ${num_nans} NaNs`);
-        concept.repr = repr;
-
-        // calculate means
-        const { steps, m, n } = current_model.getShapes();
-        const means = new Float32Array(m*steps);
-        for (let step = 0; step < steps; step++) {
-          for (let i = 0; i < n*n; i++) {
-            for (let j = 0; j < m; j++) {
-              means[step*m + j] += repr[step*n*n*m + i*m + j] / (n*n);
-            }
-          }
-        }
-        concept.repr_means = means;
-        repr_cache[url] = repr;
-        repr_cache[url+'_means'] = means;
-        // update convases as the representations are available now
+    const { steps, n, m } = current_model.getShapes();
+    callWasm('fetch_repr', { url: concept.getUrl(), steps, n, m })
+      .then(() => {
+        console.log(`Fetched repr for ${concept.name} from ${concept.getUrl()}`);
         updateCanvasesWithLastClicked();
       })
       .catch(error => {
@@ -312,205 +331,6 @@ function setupConcept({ index, initial_step }, i) {
 }
 
 
-
-// calculate the cosine similarity between two representations
-function cosineSimilarity(repr1, offset1, repr2, offset2) {
-
-  // init
-  const { m } = current_model.getShapes();
-  let dotProduct = 0.0;
-  let normA = 0.0;
-  let normB = 0.0;
-
-  for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i;
-    const i2 = offset2 + i;
-    dotProduct += repr1[i1] * repr2[i2];
-    normA += repr1[i1] * repr1[i1];
-    normB += repr2[i2] * repr2[i2];
-  }
-
-  normA = Math.sqrt(normA);
-  normB = Math.sqrt(normB);
-
-  if (normA === 0 || normB === 0) {
-    console.error('One of the vectors is zero');
-    console.log('m:', m, 'n:', n, 'dotProduct:', dotProduct, 'normA:', normA, 'normB:', normB);
-    return NaN;
-  }
-
-  return dotProduct / (normA * normB);
-}
-
-
-// calculate the soft cosine similarity between two representations
-// with similarity matrix $s_{ij} := min(|a_i-a_j|,|b_i-b_j|) / (max(|a_i-a_j|,|b_i-b_j|) + \epsilon)$
-// this is slow, tends to nan and doesn't really seem to work
-function softCosineSimilarity(repr1, offset1, repr2, offset2) {
-
-  // init
-  const { m } = current_model.getShapes();
-  let dotProduct = 0.0;
-  let normA = 0.0;
-  let normB = 0.0;
-
-  // get max values for regulatization for numerical stability
-  let max = 0.0;
-  for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i;
-    const i2 = offset2 + i;
-    max = Math.max(max, Math.abs(repr1[i1]), Math.abs(repr2[i2]));
-  }
-
-  // TODO: two nested loops are very slow
-  for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i;
-    const i2 = offset2 + i;
-    const x1i = repr1[i1] / max;
-    const x2i = repr2[i2] / max;
-    for (let j = 0; j < m; j++) {
-      const j1 = offset1 + j;
-      const j2 = offset2 + j;
-      const x1j = repr1[j1] / max;
-      const x2j = repr2[j2] / max;
-      const diff1 = Math.abs(x1i - x1j);
-      const diff2 = Math.abs(x2i - x2j);
-      const element_similarity = i==j || Math.min(diff1, diff2) / ((Math.max(diff1, diff2)) + 1e-10);
-      dotProduct += element_similarity * x1i * x2j;
-      normA += element_similarity * x1i * x1j;
-      normB += element_similarity * x2i * x2j;
-    }
-  }
-
-  normA = Math.sqrt(normA);
-  normB = Math.sqrt(normB);
-
-  if (normA === 0 || normB === 0) {
-    throw new Error('One of the vectors is zero');
-  }
-
-  return dotProduct / (normA * normB) * max;
-}
-
-
-// center the representations and then calculate cosine similarity
-function centeredCosineSimilarity(repr1, offset1, means1, repr2, offset2, means2) {
-
-  // init
-  const { m } = current_model.getShapes();
-  let dotProduct = 0.0;
-  let normA = 0.0;
-  let normB = 0.0;
-
-  // calculate centered cosine similarity
-  for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i;
-    const i2 = offset2 + i;
-    const mean = (means1[i] + means2[i]) / 2;  // use the mean over both representations
-    dotProduct += (repr1[i1] - mean) * (repr2[i2] - mean);
-    normA += Math.pow(repr1[i1] - mean, 2);
-    normB += Math.pow(repr2[i2] - mean, 2);
-  }
-
-  normA = Math.sqrt(normA);
-  normB = Math.sqrt(normB);
-
-  if (normA === 0 || normB === 0) {
-    throw new Error('One of the vectors is zero');
-  }
-
-  return dotProduct / (normA * normB);
-}
-
-
-// calculate the euclidean distance (L1) between two representations
-function euclideanDistance(repr1, offset1, repr2, offset2) {
-  const { m } = current_model.getShapes();
-  let sum = 0.0;
-  for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i;
-    const i2 = offset2 + i;
-    sum += Math.pow(repr1[i1] - repr2[i2], 2);
-  }
-
-  return Math.sqrt(sum);
-}
-
-
-// calculate the manhattan distance (L2) between two representations
-function manhattanDistance(repr1, offset1, repr2, offset2) {
-  const { m } = current_model.getShapes();
-  let sum = 0.0;
-  for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i;
-    const i2 = offset2 + i;
-    sum += Math.abs(repr1[i1] - repr2[i2]);
-  }
-  return sum;
-}
-
-
-// calculate the chebyshev distance (L∞) between two representations
-function chebyshevDistance(repr1, offset1, repr2, offset2) {
-  const { m } = current_model.getShapes();
-  let max = 0.0;
-  for (let i = 0; i < m; i++) {
-    const i1 = offset1 + i;
-    const i2 = offset2 + i;
-    const diff = Math.abs(repr1[i1] - repr2[i2]);
-    if (diff > max) max = diff;
-  }
-  return max;
-}
-
-
-// calculate similarities based on the selected similarity measure and tile
-function calcSimilarities(base_concept, col, row, concept) {
-  const { m, n } = current_model.getShapes();
-  const step1 = base_concept.step - 1;
-  const step2 = concept.step - 1;
-
-  // check if representations are loaded
-  if (!base_concept.repr || !concept.repr) return undefined;
-
-  // helper function to calculate similarities for all tiles
-  const calc = measure => {
-    const x = [];
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        const offset1 = step1*m*n*n + row*n*m + col*m;
-        const offset2 = step2*m*n*n +   j*n*m +   i*m;
-        const similarity = measure(base_concept.repr, offset1, concept.repr, offset2);
-        x.push(similarity);
-      }
-    }
-    return x;
-  }
-
-  // calculate similarities
-  const measure_str = document.getElementById('similarity-measure').value;
-  if (measure_str === 'cosine') {
-    return calc(cosineSimilarity);
-  } else if (measure_str === 'soft_cosine') {
-    return calc(softCosineSimilarity);
-  } else if (measure_str === 'cosine_centered') {
-    return calc((r1,o1,r2,o2) => centeredCosineSimilarity(r1,o1,base_concept.repr_means.subarray(step1*m,step1*m+m),r2,o2,concept.repr_means.subarray(step2*m,step2*m+m)));
-  } else if (measure_str === 'euclidean') {
-    const differences =  calc(euclideanDistance);
-    const max = Math.max(...differences);
-    return differences.map(x => 1 - x / max);
-  } else if (measure_str === 'manhattan') {
-    const differences = calc(manhattanDistance);
-    const max = Math.max(...differences);
-    return differences.map(x => 1 - x / max);
-  } else if (measure_str === 'chebyshev') {
-    const differences = calc(chebyshevDistance);
-    const max = Math.max(...differences);
-    return differences.map(x => 1 - x / max);
-  }
-}
-
-
 // Function to draw the grid
 function drawGrid(ctx) {
   const { n } = current_model.getShapes();
@@ -535,6 +355,44 @@ function drawGrid(ctx) {
 }
 
 
+function drawSimilarities(concept, similarities) {
+  const { n, m } = current_model.getShapes();
+  const tile_ctx = concept.tile_ctx;
+  const tile_size = tile_ctx.canvas.width / n;
+  const { width, height } = tile_ctx.canvas;
+  tile_ctx.clearRect(0, 0, width, height);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const similarity = similarities[i + j * n];
+      // draw orange for positive similarity and blue for negative similarity
+      tile_ctx.fillStyle = similarity > 0 ? `rgba(255, 165, 0, ${similarity})` : `rgba(0, 165, 255, ${-similarity})`;
+      tile_ctx.fillRect(i * tile_size, j * tile_size, tile_size, tile_size);
+    }
+  }
+  // calculate and update average similarity
+  const averageSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length;
+  concept.text.textContent = `${averageSimilarity.toFixed(4)}`;
+}
+
+function drawError(concept, msg) {
+  const tile_ctx = concept.tile_ctx;
+  const { width, height } = tile_ctx.canvas;
+  tile_ctx.clearRect(0, 0, width, height);
+  tile_ctx.fillStyle = 'black';
+  tile_ctx.font = '30px Arial';
+  tile_ctx.textAlign = 'center';
+  tile_ctx.textBaseline = 'middle';
+  const loading_dots_count = Math.floor((Date.now() % 1000) / 250);
+  const loading_dots = '.'.repeat(loading_dots_count) + ' '.repeat(3 - loading_dots_count);
+  msg = msg.replace('...', loading_dots);
+  const lines = msg.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    tile_ctx.fillText(lines[i], width / 2, height / 2 - (lines.length-1) * 20 + i * 40);
+  }
+  concept.text.textContent = `?`;
+}
+
+
 // Update the canvas highlightings based on the mouse position
 function updateCanvases(base_concept, col, row) {
   const { n } = current_model.getShapes();
@@ -545,9 +403,12 @@ function updateCanvases(base_concept, col, row) {
   const curr_tile = `${base_concept.id}-${col}-${row}`;
   if (curr_tile === last_tile) return;
   last_tile = curr_tile;
+  render_counter++;
 
   // Update the canvases
-  for (const concept of concepts) {
+  const func = document.getElementById('similarity-measure').value;
+  const concepts_sorted = concepts.slice().sort((a, b) => b == base_concept);  // sort concepts so that the base concept is drawn first
+  for (const concept of concepts_sorted) {
     const tile_size = concept.image_ctx.canvas.width / n;
     // update image canvas
     const img_ctx = concept.image_ctx;
@@ -572,44 +433,23 @@ function updateCanvases(base_concept, col, row) {
       img_ctx.fillRect(last_clicked.col * tile_size, last_clicked.row * tile_size, tile_size, tile_size);
     }
     // update tile canvas
-    const similarities = calcSimilarities(base_concept, col, row, concept);
-    const tile_ctx = concept.tile_ctx;
-    const { width, height } = tile_ctx.canvas;
-    tile_ctx.clearRect(0, 0, width, height);
-    if (similarities) {
-      // draw the similarities
-      for (let i = 0; i < n; i++) {
-        for (let j = 0; j < n; j++) {
-          const similarity = similarities[i * n + j];
-          // draw orange for positive similarity and blue for negative similarity
-          tile_ctx.fillStyle = similarity > 0 ? `rgba(255, 165, 0, ${similarity})` : `rgba(0, 165, 255, ${-similarity})`;
-          tile_ctx.fillRect(i * tile_size, j * tile_size, tile_size, tile_size);
+    callWasm('calc_similarities', { func, repr1_str: base_concept.getUrl(), repr2_str: concept.getUrl(), step1: base_concept.step-1, step2: concept.step-1, row, col })
+      .then((similarities) => {
+        if (similarities === 'loading') {
+          drawError(concept, 'Loading...');
+          updateCanvasesSoon(base_concept, col, row);  // schedule update to check if representations are loaded and animate loading text
+          return;
+        } else if (similarities === 'outdated') {
+          return;
+        } else {
+          drawSimilarities(concept, similarities);
         }
-      }
-      // calculate and update average similarity
-      const averageSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length;
-      concept.text.textContent = `${averageSimilarity.toFixed(4)}`;
-    } else {
-      tile_ctx.fillStyle = 'black';
-      tile_ctx.font = '30px Arial';
-      tile_ctx.textAlign = 'center';
-      tile_ctx.textBaseline = 'middle';
-      const loading_dots_count = Math.floor((Date.now() % 1000) / 250);
-      const loading_dots = '.'.repeat(loading_dots_count) + ' '.repeat(3 - loading_dots_count);
-      if (concept.repr) {
-        // this concept is ready, so some other concept is at fault
-        tile_ctx.fillText('Waiting for other representation'+loading_dots, width / 2, height / 2);
-      } else if (concept.repr_loading_started === null) {
-        // repr_loading_started is null if the request failed
-        tile_ctx.fillText('Failed to load model.', width / 2, height / 2);
-        tile_ctx.fillText('Change settings to try again.', width / 2, height / 2 + 40);
-      } else if (concept.repr_loading_started + 500 < Date.now()) {
-        // display loading text after 500ms
-        tile_ctx.fillText('Loading'+loading_dots, width / 2, height / 2);
-      }
-      concept.text.textContent = `?`;
-      updateCanvasesSoon(base_concept, col, row);  // schedule update to check if representations are loaded and animate loading text
-    }
+      })
+      .catch((error) => {
+        // console.error('Error while calculating similarities:', error);
+        drawError(concept, 'Error calculating similarities...\nTry to change settings.');
+        updateCanvasesSoon(base_concept, col, row);  // schedule update to check if representations are loaded and animate loading text
+      });
   }
 }
 
@@ -626,16 +466,16 @@ function updateCanvasesSoon(concept, col, row) {
   // force update
   last_tile = null;
   // update now if the last update was more than 100ms ago, to ensure updates even when this function is called often
-  if (self.timer && self.last_updated && self.last_updated + 100 < Date.now()) {
+  if (self.timer && self.last_updated && self.last_updated + 200 < Date.now()) {
     self.last_updated = Date.now();
     updateCanvases(concept, col, row);
   }
-  // scehdule update in 100ms
+  // scehdule update in 200ms
   clearTimeout(self.timer);
   self.timer = setTimeout(() => {
     self.last_updated = Date.now();
     updateCanvases(concept, col, row);
-  }, 100);
+  }, 200);
 }
 
 
