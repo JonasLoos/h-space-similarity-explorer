@@ -10,16 +10,18 @@ onmessage = function(e) {
       wasm.fetch_repr(url, steps, n, m)
         .then(() => postMessage({id, data: {status: 'success'}}))
         .catch((e) => postMessage({id, data: {status: 'error', msg: e}}))
-        .finally(() => console.log('finished fetching repr'));
     } else if (e.data.task === 'calc_similarities') {
       const { func, repr1_str, repr2_str, step1, step2, row, col } = e.data.data;
       try {
         const similarities = wasm.calc_similarities(func, repr1_str, repr2_str, step1, step2, row, col);
         postMessage({ id, data: similarities });
       } catch (e) {
-        // assume that the error is due to the loading of the representations
-        console.log('error in calc_similarities, assuming representaitons are loading\n', e);
-        postMessage({ id, data: 'loading' });
+        if (e === 'loading') {
+          postMessage({ id, data: 'loading' });
+        } else {
+          console.error('error in calc_similarities\n', e);
+          postMessage({ id, data: 'error' });
+        }
       }
     }
   })

@@ -11,6 +11,10 @@ use ndarray::{s, Array2, Array3, ArrayView1, Axis, Zip};
 use std::sync::Arc;
 
 
+macro_rules! jserr {() => {|e| JsValue::from_str(&format!("WASM: {:#?}", e))};}
+macro_rules! jsnone {() => {JsValue::from_str(&format!("WASM: unexpected None in {}:{}:{}", file!(), line!(), column!()))};}
+
+
 // cache to store representations and means
 thread_local! {
     static GLOBAL_MAP: RefCell<HashMap<String, Arc<(Array3<f32>,Array2<f32>,Array2<f32>)>>> = RefCell::new(HashMap::new());
@@ -38,8 +42,8 @@ pub fn calc_similarities(
     // get representations from cache
     GLOBAL_MAP.with(|map| {
         let reprs = map.borrow();
-        let arc_data1 = reprs.get(&repr1_str).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation, url: {}", repr1_str)))?;
-        let arc_data2 = reprs.get(&repr2_str).ok_or_else(|| JsValue::from_str(&format!("Failed to get representation, url: {}", repr2_str)))?;
+        let arc_data1 = reprs.get(&repr1_str).ok_or_else(|| JsValue::from_str("loading"))?;
+        let arc_data2 = reprs.get(&repr2_str).ok_or_else(|| JsValue::from_str("loading"))?;
         let (repr1, repr2, means1_full, means2_full, norms1, norms2) = (&arc_data1.0, &arc_data2.0, &arc_data1.1, &arc_data2.1, &arc_data1.2, &arc_data2.2);
         let n = (repr1.shape()[1] as f32).sqrt() as usize;
 
@@ -91,7 +95,7 @@ pub fn calc_similarities(
 
         // normalize distances
         if func == "euclidean" || func == "manhattan" || func == "chebyshev" {
-            let max_distance = *similarities.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+            let max_distance = *similarities.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).ok_or(jsnone!())?;
             for distance in similarities.iter_mut() {
                 *distance = 1.0 - (*distance / max_distance);
             }
@@ -127,36 +131,34 @@ pub async fn fetch_repr(url: String, steps: usize, n: usize, m: usize) -> Result
 
     // fetch representation
     let global = js_sys::global().unchecked_into::<web_sys::WorkerGlobalScope>();
-    let resp_value = match JsFuture::from(global.fetch_with_request(&request)).await {
-        Ok(value) => value,
-        Err(e) => {
-            console::warn_1(&JsValue::from_str(&format!("WASM: Fetch error: {:?}", e)));
-            return Err(JsValue::from_str(&format!("Failed to fetch representation: {}", url)))
-        }
-    };
-    let resp: Response = match resp_value.dyn_into() {
-        Ok(resp) => resp,
-        Err(_) => {
-            console::warn_1(&JsValue::from_str("WASM: Failed to get Response: resp_value.dyn_into() failed"));
-            return Err(JsValue::from_str("Failed to get Response: resp_value.dyn_into() failed"));
-        }
+    let resp: Response = match JsFuture::from(global.fetch_with_request(&request)).await {
+        Ok(value) => value.dyn_into().map_err(jserr!())?,
+        Err(e) => return Err(JsValue::from_str(&format!("Failed to fetch representation ({}): {:#?}", url, e)))
     };
 
     // convert response to float16 vector
-    let buffer_value = JsFuture::from(resp.array_buffer()?).await?;
-    let buffer: ArrayBuffer = match buffer_value.dyn_into() {
-        Ok(buffer) => buffer,
-        Err(_) => return Err(JsValue::from_str("Failed to get ArrayBuffer: buffer_value.dyn_into() failed")),
-    };
+    let buffer: ArrayBuffer = JsFuture::from(resp.array_buffer()?).await?.dyn_into().map_err(jserr!())?;
     if buffer.byte_length() % 2 != 0 {
-        return Err(JsValue::from_str("Buffer length is not a multiple of 2 (for float16)"));
+        return Err(JsValue::from_str(&format!("Buffer length is not a multiple of 2 (for float16): {}", url)));
     }
     let bytes = Uint8Array::new(&buffer).to_vec();
-    let float16_data: Vec<f16> = bytes.chunks(2).map(|chunk| f16::from_le_bytes([chunk[0], chunk[1]])).collect();
+    let float16_data: Vec<f16> = bytes.chunks_exact(2).map(|chunk| f16::from_le_bytes([chunk[0], chunk[1]])).collect();
 
-    // convert float16 vector to Array4<f32> and store it in cache
-    let representations = Array3::from_shape_vec((steps, n*n, m), float16_data.iter().map(|&x| f32::from(x)).collect()).unwrap();
-    let means = representations.mean_axis(Axis(1)).unwrap();
+    // convert float16 vector to Array4<f32>
+    let representations = match Array3::from_shape_vec((steps, n*n, m), float16_data.iter().map(|&x| f32::from(x)).collect()) {
+        Ok(repr) => repr,
+        Err(e) => {
+            let new_steps = float16_data.len() / (n*n*m);
+            if new_steps * n*n*m != float16_data.len() {
+                return Err(JsValue::from_str(format!("Failed to convert float16 vector (len {}, {}) to Array3<f32> with shape ({}, {}, {}): {:#?}", float16_data.len(), url, steps, n*n, m, e).as_str()))
+            }
+            console::warn_1(&JsValue::from_str(format!("Failed to convert float16 vector (len {}, {}) to Array3<f32> with shape ({}, {}, {}), using shape ({}, {}, {}) instead", float16_data.len(), url, steps, n*n, m, new_steps, n*n, m).as_str()));
+            Array3::from_shape_vec((new_steps, n*n, m), float16_data.iter().map(|&x| f32::from(x)).collect()).map_err(jserr!())?
+        }
+    };
+
+    // store representations and means and norms in cache
+    let means = representations.mean_axis(Axis(1)).ok_or(jsnone!())?;
     let norms = representations.mapv(|x| x.powi(2)).sum_axis(Axis(2)).mapv(f32::sqrt);
     GLOBAL_MAP.with(|map| {
         map.borrow_mut().insert(url.to_string(), Arc::new((representations, means, norms)));

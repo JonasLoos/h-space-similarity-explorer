@@ -134,7 +134,6 @@ const worker = new Worker('worker/webworker.js', { type: 'module' });
 worker.jobs = {};
 worker.job_counter = 0;
 worker.last_calc_promise = new Promise((resolve, reject) => {resolve()});
-worker.last_fetch_repr_promise = new Promise((resolve, reject) => {resolve()});
 worker.onmessage = (e) => {
   const { id, data } = e.data;
   const job = worker.jobs[id];
@@ -143,6 +142,9 @@ worker.onmessage = (e) => {
     delete worker.jobs[id];
   } else {
     console.warn('Received message for unknown job:', e.data);
+  }
+  if (data.status === 'error') {
+    console.error('Error in worker:', data.msg);
   }
 };
 worker.onerror = (e) => {
@@ -170,13 +172,9 @@ function callWasm(task, data) {
     });
     return worker.last_calc_promise;
   } else if (task === 'fetch_repr') {
-    worker.last_fetch_repr_promise = worker.last_fetch_repr_promise.then(() => {
-      console.log('Fetching repr:', id, task, data.url);
-      worker.jobs[id] = job;
-      worker.postMessage({ id, task, data });
-      return promise;
-    });
-    return worker.last_fetch_repr_promise;
+    worker.jobs[id] = job;
+    worker.postMessage({ id, task, data });
+    return promise;
   } else {
     console.error('Unknown task:', task);
   }
@@ -417,7 +415,7 @@ function updateCanvases(base_concept, col, row) {
     try {
       img_ctx.drawImage(concept.img, 0, 0, img_ctx.canvas.width, img_ctx.canvas.height);      
     } catch (error) {
-      console.warn('Error while drawing image');
+      console.warn('Error while drawing image: ', error.toString());
     }
     drawGrid(img_ctx);
     if (concept === base_concept) {
@@ -448,7 +446,7 @@ function updateCanvases(base_concept, col, row) {
       })
       .catch((error) => {
         // console.error('Error while calculating similarities:', error);
-        drawError(concept, 'Error calculating similarities...\nTry to change settings.');
+        drawError(concept, 'Error calculating similarities...\nMaybe try to change settings.');
         updateCanvasesSoon(base_concept, col, row);  // schedule update to check if representations are loaded and animate loading text
       });
   }
