@@ -226,7 +226,7 @@ function setupConcept({ index, initial_step }, i) {
   concept.image_ctx = concept.image_canvas.getContext('2d');
   concept.tile_ctx = concept.tile_canvas.getContext('2d');
 
-  concept.getUrl = () => `/representations/${current_model.short}/${concept.name}/repr-${current_position}.bin`;
+  concept.getUrl = () => `${window.location.pathname.split('/').slice(0, -1).join('/')}/representations/${current_model.short}/${concept.name}/repr-${current_position}.bin`;
 
   // helper function to load the representation
   const getRepr = () => {
