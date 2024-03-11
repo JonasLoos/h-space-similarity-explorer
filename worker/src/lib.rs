@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use js_sys::{ArrayBuffer, Uint8Array};
 use console_error_panic_hook;
 use std::panic;
-use ndarray::{s, Array2, Array3, ArrayView1, Axis, Zip};
+use ndarray::{s, Array1, Array2, ArrayView1, Axis, Zip};
 use std::sync::Arc;
 
 
@@ -17,7 +17,7 @@ macro_rules! jsnone {() => {JsValue::from_str(&format!("WASM: unexpected None in
 
 // cache to store representations and means
 thread_local! {
-    static GLOBAL_MAP: RefCell<HashMap<String, Arc<(Array3<f32>,Array2<f32>,Array2<f32>)>>> = RefCell::new(HashMap::new());
+    static GLOBAL_MAP: RefCell<HashMap<String, Arc<(Array2<f32>,Array1<f32>,Array1<f32>)>>> = RefCell::new(HashMap::new());
 }
 
 
@@ -27,8 +27,6 @@ pub fn calc_similarities(
     func: String,
     repr1_str: String,
     repr2_str: String,
-    step1: usize,
-    step2: usize,
     row: usize,
     col: usize,
 ) -> Result<Vec<f32>, JsValue> {
@@ -45,13 +43,13 @@ pub fn calc_similarities(
         let arc_data1 = reprs.get(&repr1_str).ok_or_else(|| JsValue::from_str("loading"))?;
         let arc_data2 = reprs.get(&repr2_str).ok_or_else(|| JsValue::from_str("loading"))?;
         let (repr1, repr2, means1_full, means2_full, norms1, norms2) = (&arc_data1.0, &arc_data2.0, &arc_data1.1, &arc_data2.1, &arc_data1.2, &arc_data2.2);
-        let n = (repr1.shape()[1] as f32).sqrt() as usize;
+        let n = (repr1.shape()[0] as f32).sqrt() as usize;
 
         // calculate mean of bath representations
         let means = if func == "cosine_centered" {
             Some(
-                Zip::from(&means1_full.slice(s![step1,..]))
-                    .and(&means2_full.slice(s![step2,..]))
+                Zip::from(means1_full)
+                    .and(means2_full)
                     .map_collect(|&mean1, &mean2| ((mean1 + mean2) / 2.0)))
         } else { None };
 
@@ -59,31 +57,31 @@ pub fn calc_similarities(
         // let time_after_loading = js_sys::Date::now();
 
         // calculate similarities
-        let a: ArrayView1<f32> = repr1.slice(s![step1,row*n+col,..]);
+        let a: ArrayView1<f32> = repr1.slice(s![row*n+col,..]);
         let mut similarities: Vec<f32> = match func.as_str() {
-            "cosine" => repr2.slice(s![step2, .., ..])
+            "cosine" => repr2
                 .axis_iter(Axis(0))
                 .enumerate()
-                .map(|(index, b)| b.dot(&a) / (norms1[[step1, index]] * norms2[[step2, index]]))
+                .map(|(index, b)| b.dot(&a) / (norms1[[index]] * norms2[[index]]))
                 .collect::<Vec<_>>(),
-            "cosine_centered" => repr2.slice(s![step2,..,..])
+            "cosine_centered" => repr2
                 .axis_iter(Axis(0))
                 .enumerate()
                 .map(|(index, b)|
                     Zip::from(a)
                         .and(b)
                         .and(means.as_ref().unwrap().view())
-                        .fold(0.0, |acc, &ai, &bi, &mean| acc + (ai - mean) * (bi - mean)) / (norms1[[step1, index]] * norms2[[step2, index]]))
+                        .fold(0.0, |acc, &ai, &bi, &mean| acc + (ai - mean) * (bi - mean)) / (norms1[[index]] * norms2[[index]]))
                 .collect::<Vec<_>>(),
-            "manhattan" => repr2.slice(s![step2,..,..])
+            "manhattan" => repr2
                 .axis_iter(Axis(0))
                 .map(|b| Zip::from(a).and(b).fold(0.0, |acc, &ai, &bi| acc + (ai - bi).abs()))
                 .collect::<Vec<_>>(),
-            "euclidean" => repr2.slice(s![step2,..,..])
+            "euclidean" => repr2
                 .axis_iter(Axis(0))
                 .map(|b| Zip::from(a).and(b).fold(0.0, |acc, &ai, &bi| acc + (ai - bi).powi(2)).sqrt())
                 .collect::<Vec<_>>(),
-            "chebyshev" => repr2.slice(s![step2,..,..])
+            "chebyshev" => repr2
                 .axis_iter(Axis(0))
                 .map(|b| Zip::from(a).and(b).fold(0.0, |acc: f32, &ai, &bi| acc.max((ai - bi).abs())))
                 .collect::<Vec<_>>(),
@@ -114,7 +112,7 @@ pub fn calc_similarities(
 
 // fetch representation from url and store it in cache
 #[wasm_bindgen]
-pub async fn fetch_repr(url: String, steps: usize, n: usize, m: usize) -> Result<(), JsValue> {
+pub async fn fetch_repr(url: String, n: usize, m: usize) -> Result<(), JsValue> {
     console_error_panic_hook::set_once();  // better error messages in the console
 
     // if the representation is already fetched, return
@@ -145,21 +143,16 @@ pub async fn fetch_repr(url: String, steps: usize, n: usize, m: usize) -> Result
     let float16_data: Vec<f16> = bytes.chunks_exact(2).map(|chunk| f16::from_le_bytes([chunk[0], chunk[1]])).collect();
 
     // convert float16 vector to Array4<f32>
-    let representations = match Array3::from_shape_vec((steps, n*n, m), float16_data.iter().map(|&x| f32::from(x)).collect()) {
+    let representations = match Array2::from_shape_vec((n*n, m), float16_data.iter().map(|&x| f32::from(x)).collect()) {
         Ok(repr) => repr,
         Err(e) => {
-            let new_steps = float16_data.len() / (n*n*m);
-            if new_steps * n*n*m != float16_data.len() {
-                return Err(JsValue::from_str(format!("Failed to convert float16 vector (len {}, {}) to Array3<f32> with shape ({}, {}, {}): {:#?}", float16_data.len(), url, steps, n*n, m, e).as_str()))
-            }
-            console::warn_1(&JsValue::from_str(format!("Failed to convert float16 vector (len {}, {}) to Array3<f32> with shape ({}, {}, {}), using shape ({}, {}, {}) instead", float16_data.len(), url, steps, n*n, m, new_steps, n*n, m).as_str()));
-            Array3::from_shape_vec((new_steps, n*n, m), float16_data.iter().map(|&x| f32::from(x)).collect()).map_err(jserr!())?
+            return Err(JsValue::from_str(format!("Failed to convert float16 vector (len {}, {}) to Array3<f32> with shape ({}, {}): {:#?}", float16_data.len(), url, n*n, m, e).as_str()))
         }
     };
 
     // store representations and means and norms in cache
-    let means = representations.mean_axis(Axis(1)).ok_or(jsnone!())?;
-    let norms = representations.mapv(|x| x.powi(2)).sum_axis(Axis(2)).mapv(f32::sqrt);
+    let means = representations.mean_axis(Axis(0)).ok_or(jsnone!())?;
+    let norms = representations.mapv(|x| x.powi(2)).sum_axis(Axis(1)).mapv(f32::sqrt);
     GLOBAL_MAP.with(|map| {
         map.borrow_mut().insert(url.to_string(), Arc::new((representations, means, norms)));
     });

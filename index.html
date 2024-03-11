@@ -224,13 +224,13 @@ function setupConcept({ index, initial_step }, i) {
   concept.image_ctx = concept.image_canvas.getContext('2d');
   concept.tile_ctx = concept.tile_canvas.getContext('2d');
 
-  concept.getUrl = () => `${window.location.pathname.split('/').slice(0, -1).join('/')}/representations/${current_model.short}/${concept.name}/repr-${current_position}.bin`;
+  concept.getUrl = () => `${window.location.pathname.split('/').slice(0, -1).join('/')}/representations/${current_model.short}/${concept.name}/repr-${current_position}-${concept.step-1}.bin`;
 
   // helper function to load the representation
   const getRepr = () => {
     concept.repr_loading_started = Date.now();
     const { steps, n, m } = current_model.getShapes();
-    callWasm('fetch_repr', { url: concept.getUrl(), steps, n, m })
+    callWasm('fetch_repr', { url: concept.getUrl(), n, m })
       .then(() => {
         console.log(`Fetched repr for ${concept.name} from ${concept.getUrl()}`);
         updateCanvasesWithLastClicked();
@@ -310,11 +310,8 @@ function setupConcept({ index, initial_step }, i) {
   
   // slider event listener
   slider.addEventListener('input', event => {
-    const value = event.target.value;
-    slider_value.textContent = value;
-    concept.step = value;
-    concept.img.src = `representations/${current_model.short}/${concept.name}/${concept.step}.jpg`;
-    updateCanvasesWithLastClicked();
+    concept.step = event.target.value;
+    concept.update();
   });
 
   // concept name select event listener
@@ -432,7 +429,7 @@ function updateCanvases(base_concept, col, row) {
       img_ctx.fillRect(last_clicked.col * tile_size, last_clicked.row * tile_size, tile_size, tile_size);
     }
     // update tile canvas
-    callWasm('calc_similarities', { func, repr1_str: base_concept.getUrl(), repr2_str: concept.getUrl(), step1: base_concept.step-1, step2: concept.step-1, row, col })
+    callWasm('calc_similarities', { func, repr1_str: base_concept.getUrl(), repr2_str: concept.getUrl(), row, col })
       .then((similarities) => {
         if (similarities === 'loading') {
           drawError(concept, 'Loading...');

@@ -228,13 +228,11 @@ function getArrayF32FromWasm0(ptr, len) {
 * @param {string} func
 * @param {string} repr1_str
 * @param {string} repr2_str
-* @param {number} step1
-* @param {number} step2
 * @param {number} row
 * @param {number} col
 * @returns {Float32Array}
 */
-export function calc_similarities(func, repr1_str, repr2_str, step1, step2, row, col) {
+export function calc_similarities(func, repr1_str, repr2_str, row, col) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passStringToWasm0(func, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -243,7 +241,7 @@ export function calc_similarities(func, repr1_str, repr2_str, step1, step2, row,
         const len1 = WASM_VECTOR_LEN;
         const ptr2 = passStringToWasm0(repr2_str, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len2 = WASM_VECTOR_LEN;
-        wasm.calc_similarities(retptr, ptr0, len0, ptr1, len1, ptr2, len2, step1, step2, row, col);
+        wasm.calc_similarities(retptr, ptr0, len0, ptr1, len1, ptr2, len2, row, col);
         var r0 = getInt32Memory0()[retptr / 4 + 0];
         var r1 = getInt32Memory0()[retptr / 4 + 1];
         var r2 = getInt32Memory0()[retptr / 4 + 2];
@@ -261,15 +259,14 @@ export function calc_similarities(func, repr1_str, repr2_str, step1, step2, row,
 
 /**
 * @param {string} url
-* @param {number} steps
 * @param {number} n
 * @param {number} m
 * @returns {Promise<void>}
 */
-export function fetch_repr(url, steps, n, m) {
+export function fetch_repr(url, n, m) {
     const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.fetch_repr(ptr0, len0, steps, n, m);
+    const ret = wasm.fetch_repr(ptr0, len0, n, m);
     return takeObject(ret);
 }
 
@@ -280,7 +277,7 @@ function handleError(f, args) {
         wasm.__wbindgen_exn_store(addHeapObject(e));
     }
 }
-function __wbg_adapter_57(arg0, arg1, arg2, arg3) {
+function __wbg_adapter_55(arg0, arg1, arg2, arg3) {
     wasm.wasm_bindgen__convert__closures__invoke2_mut__h493f10fe887c5e99(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
 }
 
@@ -381,9 +378,6 @@ function __wbg_get_imports() {
     imports.wbg.__wbg_log_79d3c56888567995 = function(arg0) {
         console.log(getObject(arg0));
     };
-    imports.wbg.__wbg_warn_2a68e3ab54e55f28 = function(arg0) {
-        console.warn(getObject(arg0));
-    };
     imports.wbg.__wbg_newwithstrandinit_11fbc38beb4c26b0 = function() { return handleError(function (arg0, arg1, arg2) {
         const ret = new Request(getStringFromWasm0(arg0, arg1), getObject(arg2));
         return addHeapObject(ret);
@@ -456,7 +450,7 @@ function __wbg_get_imports() {
                 const a = state0.a;
                 state0.a = 0;
                 try {
-                    return __wbg_adapter_57(a, state0.b, arg0, arg1);
+                    return __wbg_adapter_55(a, state0.b, arg0, arg1);
                 } finally {
                     state0.a = a;
                 }
@@ -512,7 +506,7 @@ function __wbg_get_imports() {
         const ret = wasm.memory;
         return addHeapObject(ret);
     };
-    imports.wbg.__wbindgen_closure_wrapper274 = function(arg0, arg1, arg2) {
+    imports.wbg.__wbindgen_closure_wrapper266 = function(arg0, arg1, arg2) {
         const ret = makeMutClosure(arg0, arg1, 45, __wbg_adapter_20);
         return addHeapObject(ret);
     };

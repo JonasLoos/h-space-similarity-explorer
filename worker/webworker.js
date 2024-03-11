@@ -6,14 +6,14 @@ onmessage = function(e) {
   asdf.then(_ => {
     const id = e.data.id;
     if (e.data.task === 'fetch_repr') {
-      const { url, steps, n, m } = e.data.data;
-      wasm.fetch_repr(url, steps, n, m)
+      const { url, n, m } = e.data.data;
+      wasm.fetch_repr(url, n, m)
         .then(() => postMessage({id, data: {status: 'success'}}))
         .catch((e) => postMessage({id, data: {status: 'error', msg: e}}))
     } else if (e.data.task === 'calc_similarities') {
-      const { func, repr1_str, repr2_str, step1, step2, row, col } = e.data.data;
+      const { func, repr1_str, repr2_str, row, col } = e.data.data;
       try {
-        const similarities = wasm.calc_similarities(func, repr1_str, repr2_str, step1, step2, row, col);
+        const similarities = wasm.calc_similarities(func, repr1_str, repr2_str, row, col);
         postMessage({ id, data: similarities });
       } catch (e) {
         if (e === 'loading') {
