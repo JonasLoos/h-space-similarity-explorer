@@ -4,7 +4,9 @@
 
 This is a simple tool to explore the similarity between the representations of different concepts at different spatial positions in the h-space of diffusion models.
 
-![image](https://github.com/JonasLoos/h-space-similarity-explorer/assets/33965649/bf895921-2616-43c7-86f4-39d5d570d21c)
+<p align="center"><img src="https://github.com/JonasLoos/h-space-similarity-explorer/assets/33965649/beb8f010-d80f-4df1-b571-dd250b712676" width="60%" center/></p>
+
+
 
 ## Generating custom images for the similarity explorer
 
