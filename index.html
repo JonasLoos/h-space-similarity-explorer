@@ -17,7 +17,7 @@
 }
 #intro p {
   margin: 1em;
-  line-height: 1.2em;
+  line-height: 1.3em;
 }
 .select-container {
   margin: .5em;
@@ -491,7 +491,7 @@ function updatePositionSelector() {
 
 function updateModelDescription() {
   const { steps, m, n} = current_model.getShapes();
-  document.getElementById('model-description').textContent = `The examples below are the output for ${current_model.name} at position ${current_position} in the diffusion unet, which has a dimension of (${steps},${m},${n},${n}), i.e. ${steps} steps, ${m} channels, and ${n}x${n} spatial resolution.`;
+  document.getElementById('model-description').innerHTML = `The examples below are the output for <a href="https://huggingface.co/${current_model.name}">${current_model.name}</a> at position ${current_position} in the diffusion unet, which has a dimension of (${steps},${m},${n},${n}), i.e. ${steps} steps, ${m} channels, and ${n}x${n} spatial resolution.`;
 };
 
 
