@@ -4,6 +4,7 @@ from diffusers import AutoPipelineForText2Image
 import torch
 from typing import Optional, Callable, Any, Literal
 from PIL.Image import Image as PILImage
+from dataclasses import dataclass
 
 
 
@@ -38,18 +39,16 @@ def load_sdxl_lightning(steps: int, device: str):
     return pipe
 
 
-
+@dataclass
 class SDResult:
     prompt : str
     seed : int
-    representations : dict[str, list[torch.Tensor]]
+    representations : dict[str, list[torch.Tensor|tuple]]
     images : list[PILImage]
     result_latent : torch.Tensor
     result_tensor : torch.Tensor
     result_image : PILImage
-    def __init__(self, **kwargs): self.__dict__.update(kwargs)
-    def __repr__(self): return f'<SDResult prompt="{self.prompt}" seed={self.seed} ...>'
-
+    def __repr__(self): return f'SDResult(prompt="{self.prompt}",seed={self.seed},...)'
 
 class SD:
     '''
@@ -100,9 +99,10 @@ class SD:
             self,
             model_name: Literal['SD1.5', 'SD2.1', 'SD-Turbo', 'SDXL-Turbo'] | str = 'SD1.5',
             device: str = 'auto',
+            disable_progress_bar: bool = False,
         ):
         self.model_name = model_name
-        self.config = self.known_models.get(model_name, {'name':model_name})
+        self.config = self.known_models.get(model_name, {'name': model_name})
         self.device = device if device != 'auto' else 'cuda' if torch.cuda.is_available() else 'cpu'
 
         # setup pipeline
@@ -112,12 +112,19 @@ class SD:
             self.pipeline = AutoPipelineForText2Image.from_pretrained(self.config['name'], torch_dtype=torch.float16).to(self.device)
         self.vae = self.pipeline.vae
 
+        if disable_progress_bar and hasattr(self.pipeline, 'set_progress_bar_config'):
+            self.pipeline.set_progress_bar_config(disable=True)
+
         # upcast vae if necessary (SDXL models require float32)
         if hasattr(self.pipeline, 'upcast_vae') and self.vae.dtype == torch.float16 and self.vae.config.force_upcast:
             self.pipeline.upcast_vae()
 
-        # check h-space dim
-        # TODO
+        # setup available extract positions
+        self.available_extract_positions = []
+        for name, obj in self.pipeline.unet.named_children():
+            if any(x in name for x in ['time_', '_norm', '_act', '_embedding']): continue
+            self.available_extract_positions += [f'{name}[{i}]' for i in range(len(obj))] if isinstance(obj, torch.nn.ModuleList) else [name]
+        self.available_extract_positions.sort(key=lambda x: ['conv_in', 'down_blocks', 'mid_block', 'up_blocks', 'conv_out'].index(x.split('[')[0]))
 
     @torch.no_grad()
     def vae_decode(self, latents):

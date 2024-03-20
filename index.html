@@ -154,7 +154,7 @@ worker.onerror = (e) => {
 // send a task to the webworker and return a promise
 function callWasm(task, data) {
   const id = worker.job_counter++;
-  const job = {id, task}
+  const job = {id, task};
   const promise = new Promise((resolve, reject) => {
     job.resolve = resolve;
     job.reject = reject;
@@ -477,11 +477,18 @@ function updateCanvasesSoon(concept, col, row) {
 
 
 function updatePositionSelector() {
-  if (current_model.representations[current_position] === undefined) current_position = 'mid_block';  // fallback to mid_block, if current position is not available
+  if (current_model.representations[current_position] === undefined || !current_model.representations[current_position].available)
+    current_position = 'mid_block';  // fallback to mid_block, if current position is not available
   document.getElementById('position-to-use').innerHTML = '';  // clear old options
   Object.keys(current_model.representations).forEach(position => {
     // setup available positions (where the representations are extracted from)
-    createElem('option', { value: position, textContent: position == 'mid_block' ? 'mid_block (h-space)' : position, selected: position == current_position }, document.getElementById('position-to-use'));
+    createElem('option', {
+      value: position,
+      textContent: position == 'mid_block' ? 'mid_block (h-space)' : position,
+      disabled: !current_model.representations[position].available,
+      title: !current_model.representations[position].available ? 'Not available due to large representation size' : undefined,
+      selected: position == current_position
+    }, document.getElementById('position-to-use'));
   });
 }
 
