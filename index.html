@@ -420,19 +420,19 @@ function updateCanvases(base_concept, col, row) {
       console.warn('Error while drawing image: ', error.toString());
     }
     drawGrid(img_ctx);
+    // highlight the currently selected tile
     if (concept === base_concept) {
-      // highlight the currently selected tile
       img_ctx.strokeStyle = 'rgba(255, 165, 0, 1)';
       img_ctx.lineWidth = 2;
       img_ctx.strokeRect(col * tile_size, row * tile_size, tile_size, tile_size);
       img_ctx.fillStyle = 'rgba(255, 165, 0, 0.7)';
       img_ctx.fillRect(col * tile_size, row * tile_size, tile_size, tile_size);
     }
-    if (last_clicked.concept_id === concept.id && !(last_clicked.col === col && last_clicked.row === row && concept === base_concept)) {
-      // highlight the last clicked tile
-      img_ctx.fillStyle = 'rgba(255, 165, 165, 0.7)';
-      img_ctx.fillRect(last_clicked.col * tile_size, last_clicked.row * tile_size, tile_size, tile_size);
-    }
+    // highlight the last clicked tile (might be confusing)
+    // if (last_clicked.concept_id === concept.id && !(last_clicked.col === col && last_clicked.row === row && concept === base_concept)) {
+    //   img_ctx.fillStyle = 'rgba(255, 165, 165, 0.7)';
+    //   img_ctx.fillRect(last_clicked.col * tile_size, last_clicked.row * tile_size, tile_size, tile_size);
+    // }
     // update tile canvas
     callWasm('calc_similarities', { func, repr1_str: base_concept.getUrl(), repr2_str: concept.getUrl(), row, col })
       .then((similarities) => {
@@ -444,6 +444,15 @@ function updateCanvases(base_concept, col, row) {
           return;
         } else {
           drawSimilarities(concept, similarities);
+          // highlight the most similar tile
+          if (concept !== base_concept) {
+            const max_sim = Math.max(...similarities);
+            const max_idx = similarities.indexOf(max_sim);
+            const max_col = max_idx % n;
+            const max_row = Math.floor(max_idx / n);
+            img_ctx.fillStyle = 'rgba(165, 255, 0, 0.7)';
+            img_ctx.fillRect(max_col * tile_size, max_row * tile_size, tile_size, tile_size);
+          }
         }
       })
       .catch((error) => {
