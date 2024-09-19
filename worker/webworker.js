@@ -1,9 +1,9 @@
 import * as wasm from './pkg/worker.js';
 
-const asdf = wasm.default().then(_ => null);
+const wasmInit = wasm.default().then(_ => null);
 
 onmessage = function(e) {
-  asdf.then(_ => {
+  wasmInit.then(_ => {
     const id = e.data.id;
     if (e.data.task === 'fetch_repr') {
       const { url, n, m } = e.data.data;

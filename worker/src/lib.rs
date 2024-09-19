@@ -2,7 +2,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use std::collections::HashMap;
 use half::f16;
-use web_sys::{js_sys, Request, RequestInit, RequestMode, Response, console};
+use web_sys::{js_sys, Request, RequestInit, RequestMode, Response};
+// use web_sys::console
 use std::cell::RefCell;
 use js_sys::{ArrayBuffer, Uint8Array};
 use console_error_panic_hook;
@@ -62,7 +63,7 @@ pub fn calc_similarities(
             "cosine" => repr2
                 .axis_iter(Axis(0))
                 .enumerate()
-                .map(|(index, b)| b.dot(&a) / (norms1[[index]] * norms2[[index]]))
+                .map(|(index, b)| b.dot(&a) / (norms1[[row*n+col]] * norms2[[index]]))
                 .collect::<Vec<_>>(),
             "cosine_centered" => repr2
                 .axis_iter(Axis(0))
@@ -71,7 +72,7 @@ pub fn calc_similarities(
                     Zip::from(a)
                         .and(b)
                         .and(means.as_ref().unwrap().view())
-                        .fold(0.0, |acc, &ai, &bi, &mean| acc + (ai - mean) * (bi - mean)) / (norms1[[index]] * norms2[[index]]))
+                        .fold(0.0, |acc, &ai, &bi, &mean| acc + (ai - mean) * (bi - mean)) / (norms1[[row*n+col]] * norms2[[index]]))
                 .collect::<Vec<_>>(),
             "manhattan" => repr2
                 .axis_iter(Axis(0))
@@ -117,7 +118,6 @@ pub async fn fetch_repr(url: String, n: usize, m: usize) -> Result<(), JsValue> 
 
     // if the representation is already fetched, return
     if GLOBAL_MAP.with(|map| map.borrow().contains_key(&url)) {
-        console::log_1(&JsValue::from_str(&format!("WASM: Representation already fetched: {}", url)));
         return Ok(());
     }
 
