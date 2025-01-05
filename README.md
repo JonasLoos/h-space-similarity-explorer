@@ -1,3 +1,6 @@
+> [!NOTE]  
+> This project is archived. Check out the [Representation Similarity Explorer](https://github.com/JonasLoos/sd_representation_similarity_explorer) instead!
+
 # H-Space similarity explorer
 
 [click here to open the tool](https://jonasloos.github.io/h-space-similarity-explorer/)
